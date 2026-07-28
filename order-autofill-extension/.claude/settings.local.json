@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la \"C:/wamp64/www/Bizeee/\" 2>/dev/null | head -50; echo \"---\"; test -d \"C:/wamp64/www/Bizeee\" && echo \"EXISTS\" || echo \"NOT FOUND\")",
+      "Read(//c/wamp64/www/Bizeee/**)",
+      "Bash(node --check content.js)",
+      "Bash(cd \"C:/wamp64/www/Bizeee\" && grep -rniE \"country\" platform-dashboard/src --include=*.vue --include=*.ts -l 2>/dev/null | head; echo \"=== country default/enum usages ===\"; grep -rniE \"country.*\\(US|United States|default\\)|'country'|\\\\\"country\\\\\"\" platform-dashboard/src 2>/dev/null | head -20)",
+      "Bash(cd \"C:/wamp64/www/Bizeee\" && grep -rniE \"county\" platform-api --include=*.py --include=*.json -l 2>/dev/null | head; echo \"=== country in api samples ===\"; grep -rniE \"\\\\\"country\\\\\"|'country'|country_code\" platform-api 2>/dev/null | grep -iE \"US|united states|:\" | head -15)"
+    ]
+  }
+}
