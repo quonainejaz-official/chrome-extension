@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Attendance Tracker</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="header-top">
+        <div class="brand">
+          <span class="brand-mark">A</span>
+          <div>
+            <h1 class="title">Attendance Tracker</h1>
+            <p class="subtitle" id="pageStatus">Analyzing attendance page...</p>
+          </div>
+        </div>
+        <div class="header-actions">
+          <button id="settingsToggle" class="icon-btn" title="Late Time Settings">
+            <svg class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </button>
+          <button id="themeToggle" class="icon-btn" title="Toggle Dark Mode">
+            <svg id="sunIcon" class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+              <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+            </svg>
+            <svg id="moonIcon" class="theme-icon hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Settings Panel -->
+    <div id="settingsPanel" class="settings-panel hidden">
+      <p class="settings-hint" id="settingsRequiredHint" hidden>Please set your Office Start Time and Grace Minutes first, then save to calculate attendance.</p>
+      <div class="settings-row">
+        <label for="officeStartTime">Office Start Time</label>
+        <input type="time" id="officeStartTime" class="settings-input">
+      </div>
+      <div class="settings-row">
+        <label for="graceMinutes">Monthly Grace (Office Short, min)</label>
+        <input type="number" id="graceMinutes" class="settings-input" min="0" max="600" value="0">
+      </div>
+      <div class="settings-preview" id="thresholdPreview">Set a start time to enable check-in based late detection.</div>
+      <p class="settings-hint">Start Time: any check-in after it is a late arrival. Grace: monthly office-hours shortfall you can accumulate before it's charged as short leave(s).</p>
+      <button id="saveSettingsBtn" class="btn btn-primary settings-save">Save &amp; Recalculate</button>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div id="spinner" class="spinner-container">
+      <div class="spinner"></div>
+      <p class="spinner-text">Parsing table data...</p>
+    </div>
+
+    <!-- Error State -->
+    <div id="errorState" class="error-state hidden">
+      <div class="error-icon">!</div>
+      <p id="errorMessage">No attendance table found.</p>
+      <p class="error-hint">Navigate to your attendance page and try again.</p>
+    </div>
+
+    <!-- Results -->
+    <div id="results" class="results hidden">
+
+      <div class="stats-grid">
+        <div class="stat-card danger span-2">
+          <span class="stat-label">Total Deduction (days)</span>
+          <span class="stat-value" id="statTotalDeduction">0</span>
+        </div>
+      </div>
+
+      <div class="section-label">Time &amp; Attendance</div>
+      <div class="stats-grid">
+        <div class="stat-card accent">
+          <span class="stat-label">Office Time Short</span>
+          <span class="stat-value" id="statOfficeShort">0m</span>
+        </div>
+        <div class="stat-card accent">
+          <span class="stat-label">Short (After Grace)</span>
+          <span class="stat-value" id="statOfficeShortRemaining">0m</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Full Leaves</span>
+          <span class="stat-value" id="statFullLeaves">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Half Leaves</span>
+          <span class="stat-value" id="statHalfLeaves">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Short Leave Days</span>
+          <span class="stat-value" id="statShortLeaveDays">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Short Leaves</span>
+          <span class="stat-value" id="statShortLeaves">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Grace Used</span>
+          <span class="stat-value" id="statGraceUsed">0m</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Grace Left</span>
+          <span class="stat-value" id="statGraceRemaining">0m</span>
+        </div>
+        <div class="stat-card warn span-2">
+          <span class="stat-label">Leave Deduction (days)</span>
+          <span class="stat-value" id="statLeaveDeduction">0</span>
+        </div>
+      </div>
+
+      <div class="section-label">Late Analysis</div>
+      <div class="stats-grid">
+        <div class="stat-card warn">
+          <span class="stat-label">Informed Late</span>
+          <span class="stat-value" id="statInformedLate">0</span>
+        </div>
+        <div class="stat-card danger">
+          <span class="stat-label">Uninformed Late</span>
+          <span class="stat-value" id="statUninformedLate">0</span>
+        </div>
+        <div class="stat-card accent span-2">
+          <span class="stat-label">Late Deduction (days)</span>
+          <span class="stat-value" id="statLateDeduction">0</span>
+        </div>
+      </div>
+
+      <button id="detailsToggle" class="details-toggle">
+        <span>View Day-by-Day Breakdown</span>
+        <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+
+      <div id="detailsPanel" class="details-panel hidden">
+        <div class="details-block">
+          <h3 class="details-heading">Late Days</h3>
+          <div class="details-table-wrap">
+            <table class="details-table" id="lateTable">
+              <thead><tr><th>Date</th><th>Check In</th><th>Status</th><th>Deduction</th></tr></thead>
+              <tbody id="lateTableBody"></tbody>
+            </table>
+            <p class="details-empty hidden" id="lateEmpty">No late days in range.</p>
+          </div>
+        </div>
+        <div class="details-block">
+          <h3 class="details-heading">Leaves</h3>
+          <div class="details-table-wrap">
+            <table class="details-table" id="leaveTable">
+              <thead><tr><th>Date</th><th>Type</th><th>Reason</th><th>Deduction</th></tr></thead>
+              <tbody id="leaveTableBody"></tbody>
+            </table>
+            <p class="details-empty hidden" id="leaveEmpty">No leaves in range.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="meta-bar">
+        <span class="meta-item" id="metaWorkingDays">Working Days: 0</span>
+        <span class="meta-item" id="metaExcluded">Excluded: 0</span>
+      </div>
+
+      <div class="actions">
+        <button id="refreshBtn" class="btn btn-secondary">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+          </svg>
+          Refresh
+        </button>
+        <button id="copyBtn" class="btn btn-secondary">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+          </svg>
+          Copy
+        </button>
+        <button id="exportBtn" class="btn btn-primary">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          Export PDF
+        </button>
+      </div>
+
+      <div class="timestamp" id="timestamp"></div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="toast hidden">
+      <span id="toastMessage">Copied to clipboard!</span>
+    </div>
+  </div>
+
+  <script src="attendanceParser.js"></script>
+  <script src="attendanceCalculator.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

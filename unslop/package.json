@@ -1,0 +1,39 @@
+{
+  "name": "unslop",
+  "version": "1.0.0",
+  "description": "Unslop — a Chrome extension that detects and hides AI-generated social media posts on LinkedIn, X (Twitter) and Reddit.",
+  "author": "Unslop",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "icons": "node scripts/generate-icons.mjs",
+    "typecheck": "tsc --noEmit",
+    "build:pages": "vite build",
+    "build:content": "vite build --config vite.content.config.ts",
+    "build": "npm run typecheck && npm run icons && npm run build:pages && npm run build:content",
+    "build:watch": "vite build --watch",
+    "build:zip": "npm run build && node scripts/zip-dist.mjs",
+    "preview": "vite preview --port 5173",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.270",
+    "@types/node": "^20.14.10",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.39",
+    "rimraf": "^5.0.9",
+    "tailwindcss": "^3.4.7",
+    "typescript": "^5.5.3",
+    "vite": "^5.3.4"
+  }
+}

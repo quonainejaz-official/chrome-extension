@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Bizee Order Autofill (Dev Tool)",
+  "version": "0.1.0",
+  "description": "Internal dev tool: autofills the partner dashboard's new-formation-order wizard with plausible test data so you can quickly click through and test orders.",
+  "host_permissions": ["http://localhost:5173/*", "https://sandbox.bizee.partners/*"],
+  "content_scripts": [
+    {
+      "matches": ["http://localhost:5173/*", "https://sandbox.bizee.partners/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
