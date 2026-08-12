@@ -1,7 +1,9 @@
 import type { Settings, Conversation, PageContext } from '../shared/types';
+import { EMPTY_PROFILE } from '../shared/types';
 import {
   MAX_CONVERSATIONS,
   DEFAULT_MODEL_ID,
+  DEFAULT_MAX_AGENT_STEPS,
 } from '../shared/constants';
 
 const DEFAULT_SETTINGS: Settings = {
@@ -17,11 +19,23 @@ const DEFAULT_SETTINGS: Settings = {
   maxConversations: MAX_CONVERSATIONS,
   streamingEnabled: true,
   fontSize: 'medium',
+  agentEnabled: true,
+  agentByDefault: false,
+  confirmMode: 'smart',
+  maxAgentSteps: DEFAULT_MAX_AGENT_STEPS,
+  profile: EMPTY_PROFILE,
 };
 
 export async function getSettings(): Promise<Settings> {
   const result = await chrome.storage.local.get('settings');
-  return { ...DEFAULT_SETTINGS, ...result.settings };
+  const stored = (result.settings ?? {}) as Partial<Settings>;
+  return {
+    ...DEFAULT_SETTINGS,
+    ...stored,
+    // Profile is nested, so a shallow merge would drop fields added in a later
+    // version for anyone who saved settings before the upgrade.
+    profile: { ...EMPTY_PROFILE, ...(stored.profile ?? {}) },
+  };
 }
 
 export async function saveSettings(settings: Partial<Settings>): Promise<Settings> {

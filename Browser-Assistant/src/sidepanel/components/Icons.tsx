@@ -147,6 +147,50 @@ export function AlertIcon(props: IconProps) {
   );
 }
 
+/** Agent mode — a pointing hand: the assistant acting as the user's hands. */
+export function HandIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M9 11V5.5a1.5 1.5 0 013 0V11m0-1.5a1.5 1.5 0 013 0V12m0-1a1.5 1.5 0 013 0v4.5a5.5 5.5 0 01-5.5 5.5h-1.7a5 5 0 01-3.9-1.87L5 15.5a1.6 1.6 0 012.4-2.1L9 15" />
+    </svg>
+  );
+}
+
+export function StopIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <rect x="6.5" y="6.5" width="11" height="11" rx="2" />
+    </svg>
+  );
+}
+
+export function ShieldIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M12 3l7 3v5.5c0 4.2-2.9 7.9-7 9-4.1-1.1-7-4.8-7-9V6l7-3z" />
+      <path d="M9.2 12.2l1.9 1.9 3.7-3.9" />
+    </svg>
+  );
+}
+
+export function UserIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <circle cx="12" cy="8" r="3.75" />
+      <path d="M4.5 20a7.5 7.5 0 0115 0" />
+    </svg>
+  );
+}
+
+export function XCircleIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M9.5 9.5l5 5M14.5 9.5l-5 5" />
+    </svg>
+  );
+}
+
 export function GlobeIcon(props: IconProps) {
   return (
     <svg {...base} {...props}>

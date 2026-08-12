@@ -1,7 +1,10 @@
 import { useState, useRef, useEffect, type RefObject } from 'react';
 import type { Message, PageContext, Settings } from '../../shared/types';
-import { PROMPT_TEMPLATES, type PromptTemplate } from '../lib/prompts';
+import type { AgentStep } from '../../shared/actions';
+import { PROMPT_TEMPLATES, AGENT_TEMPLATES, type PromptTemplate } from '../lib/prompts';
 import { renderMarkdown, detectDir } from '../lib/markdown';
+import { ActionTrace } from './ActionTrace';
+import { ConfirmCard, type ConfirmRequest } from './ConfirmCard';
 import {
   MenuIcon,
   RefreshIcon,
@@ -15,13 +18,15 @@ import {
   ChevronDownIcon,
   SparkleIcon,
   AlertIcon,
+  HandIcon,
+  StopIcon,
 } from './Icons';
 
 interface Props {
   messages: Message[];
   isLoading: boolean;
   error: string | null;
-  onSend: (content: string, includeContext: boolean) => void;
+  onSend: (content: string, includeContext: boolean, agentMode: boolean) => void;
   pageContext: PageContext | null;
   onRefreshContext: () => void;
   isDark: boolean;
@@ -30,6 +35,11 @@ interface Props {
   onOpenSettings: () => void;
   settings: Settings;
   inputRef?: RefObject<HTMLTextAreaElement>;
+  liveSteps: AgentStep[];
+  confirmation: ConfirmRequest | null;
+  onConfirm: (approved: boolean) => void;
+  onCancelAgent: () => void;
+  isAgentRunning: boolean;
 }
 
 function IconButton({
@@ -145,9 +155,15 @@ export function ChatInterface({
   onOpenSettings,
   settings,
   inputRef: externalInputRef,
+  liveSteps,
+  confirmation,
+  onConfirm,
+  onCancelAgent,
+  isAgentRunning,
 }: Props) {
   const [input, setInput] = useState('');
   const [includeContext, setIncludeContext] = useState(settings.autoContext);
+  const [agentMode, setAgentMode] = useState(settings.agentEnabled && settings.agentByDefault);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const internalInputRef = useRef<HTMLTextAreaElement>(null);
@@ -155,11 +171,16 @@ export function ChatInterface({
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isLoading]);
+  }, [messages, isLoading, liveSteps, confirmation]);
+
+  // Agent mode is meaningless once the capability is switched off in Settings.
+  useEffect(() => {
+    if (!settings.agentEnabled) setAgentMode(false);
+  }, [settings.agentEnabled]);
 
   const handleSubmit = () => {
     if (!input.trim() || isLoading) return;
-    onSend(input.trim(), includeContext);
+    onSend(input.trim(), includeContext, agentMode);
     setInput('');
     if (inputRef.current) {
       inputRef.current.style.height = 'auto';
@@ -179,7 +200,7 @@ export function ChatInterface({
     e.target.style.height = Math.min(e.target.scrollHeight, 140) + 'px';
   };
 
-  const quickPrompts = PROMPT_TEMPLATES.filter((t) => t.category === 'quick');
+  const quickPrompts = agentMode ? AGENT_TEMPLATES : PROMPT_TEMPLATES.filter((t) => t.category === 'quick');
 
   return (
     <div className="flex flex-col h-full min-w-0">
@@ -229,7 +250,9 @@ export function ChatInterface({
               AI Page Assistant
             </h2>
             <p className="text-sm max-w-xs mb-6 text-[var(--text-muted)]">
-              Ask questions, get summaries, translate content, and more about the current page.
+              {agentMode
+                ? 'Tell me what to do on this page — click, fill in forms, pick from dropdowns. I ask before anything gets sent.'
+                : 'Ask questions, get summaries, translate content, and more about the current page.'}
             </p>
 
             <div className="grid grid-cols-1 min-[360px]:grid-cols-2 gap-2 w-full max-w-xs">
@@ -255,6 +278,11 @@ export function ChatInterface({
           return (
           <div key={msg.id} className={`flex group ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className="max-w-[85%] min-w-0 relative">
+              {msg.role === 'assistant' && msg.metadata?.steps && msg.metadata.steps.length > 0 && (
+                <div className="mb-1.5">
+                  <ActionTrace steps={msg.metadata.steps} />
+                </div>
+              )}
               <div
                 className={`px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed break-words overflow-hidden ${
                   msg.role === 'user'
@@ -301,7 +329,15 @@ export function ChatInterface({
           );
         })}
 
-        {isLoading && (
+        {/* Live agent trace + the confirmation gate */}
+        {liveSteps.length > 0 && (
+          <div className="space-y-2">
+            <ActionTrace steps={liveSteps} live />
+            {confirmation && <ConfirmCard request={confirmation} onDecide={onConfirm} />}
+          </div>
+        )}
+
+        {isLoading && !confirmation && liveSteps.length === 0 && (
           <div className="flex justify-start">
             <div className="px-3.5 py-3 rounded-2xl rounded-bl-md" style={{ background: 'var(--ai-bubble)' }}>
               <div className="flex gap-1">
@@ -323,8 +359,19 @@ export function ChatInterface({
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Agent-mode banner: this is the difference between "reads the page"
+          and "operates the page", so it should never be a surprise. */}
+      {agentMode && (
+        <div className="px-4 py-1.5 text-[11px] flex-shrink-0 flex items-center gap-1.5 text-[var(--accent)] bg-[var(--accent-soft)]">
+          <HandIcon className="w-3.5 h-3.5 flex-shrink-0" />
+          <span className="truncate">
+            Agent mode — I can click, type and choose on this page. I ask before submitting.
+          </span>
+        </div>
+      )}
+
       {/* Context indicator */}
-      {pageContext && includeContext && (
+      {pageContext && includeContext && !agentMode && (
         <div className="px-4 py-1.5 text-xs flex-shrink-0 truncate flex items-center gap-1.5 text-[var(--text-muted)] bg-[var(--bg-secondary)]" title={pageContext.title}>
           <DocumentIcon className="w-3.5 h-3.5 flex-shrink-0" />
           <span className="truncate">{pageContext.title.slice(0, 50)}{pageContext.title.length > 50 ? '…' : ''}</span>
@@ -342,6 +389,16 @@ export function ChatInterface({
             <DocumentIcon className="w-[18px] h-[18px]" />
           </IconButton>
 
+          {settings.agentEnabled && (
+            <IconButton
+              onClick={() => setAgentMode(!agentMode)}
+              title={agentMode ? 'Agent mode on — I can act on the page' : 'Agent mode off — I only read the page'}
+              active={agentMode}
+            >
+              <HandIcon className="w-[18px] h-[18px]" />
+            </IconButton>
+          )}
+
           <TemplatePicker onSelect={(prompt) => { setInput(prompt); inputRef.current?.focus(); }} />
 
           <textarea
@@ -349,24 +406,36 @@ export function ChatInterface({
             value={input}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
-            placeholder="Ask about this page…"
+            placeholder={agentMode ? 'Tell me what to do on this page…' : 'Ask about this page…'}
             rows={1}
             className="flex-1 min-w-0 resize-none bg-transparent px-1.5 py-2 text-sm leading-relaxed focus:outline-none text-[var(--text-primary)] placeholder-[var(--text-muted)]"
             style={{ maxHeight: '140px' }}
           />
-          <button
-            onClick={handleSubmit}
-            disabled={!input.trim() || isLoading}
-            className={`flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
-              input.trim() && !isLoading
-                ? 'text-white hover:opacity-90'
-                : 'text-[var(--text-muted)] bg-[var(--bg-tertiary)]'
-            }`}
-            style={input.trim() && !isLoading ? { background: 'var(--accent)' } : undefined}
-            aria-label="Send message"
-          >
-            <SendIcon className="w-4 h-4" />
-          </button>
+          {isAgentRunning ? (
+            <button
+              onClick={onCancelAgent}
+              className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-white transition-opacity hover:opacity-90"
+              style={{ background: 'var(--error)' }}
+              aria-label="Stop the agent"
+              title="Stop"
+            >
+              <StopIcon className="w-4 h-4" />
+            </button>
+          ) : (
+            <button
+              onClick={handleSubmit}
+              disabled={!input.trim() || isLoading}
+              className={`flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
+                input.trim() && !isLoading
+                  ? 'text-white hover:opacity-90'
+                  : 'text-[var(--text-muted)] bg-[var(--bg-tertiary)]'
+              }`}
+              style={input.trim() && !isLoading ? { background: 'var(--accent)' } : undefined}
+              aria-label="Send message"
+            >
+              <SendIcon className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
     </div>

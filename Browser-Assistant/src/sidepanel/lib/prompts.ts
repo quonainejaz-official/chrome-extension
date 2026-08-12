@@ -3,8 +3,43 @@ export interface PromptTemplate {
   label: string;
   icon: string;
   prompt: string;
-  category: 'quick' | 'translation' | 'summarization' | 'analysis';
+  category: 'quick' | 'translation' | 'summarization' | 'analysis' | 'agent';
 }
+
+/**
+ * Starters shown when agent mode is on. These describe things to *do*, not
+ * things to explain — the empty state should make the difference obvious.
+ */
+export const AGENT_TEMPLATES: PromptTemplate[] = [
+  {
+    id: 'agent-fill-form',
+    label: 'Fill this form',
+    icon: '✍️',
+    prompt: 'Fill in the form on this page using my saved details. Do not submit it — tell me when it is ready for me to review.',
+    category: 'agent',
+  },
+  {
+    id: 'agent-map-page',
+    label: 'What can I do here?',
+    icon: '🧭',
+    prompt: 'Look over this whole page, scrolling if you need to, and tell me what I can actually do on it — the main buttons, forms and links, and what each one is for.',
+    category: 'agent',
+  },
+  {
+    id: 'agent-find-click',
+    label: 'Find & click',
+    icon: '🖱️',
+    prompt: 'Find the ',
+    category: 'agent',
+  },
+  {
+    id: 'agent-accept-cookies',
+    label: 'Dismiss the banners',
+    icon: '🍪',
+    prompt: 'Close any cookie banner, newsletter popup or overlay covering this page. Choose the most privacy-preserving option — decline non-essential cookies rather than accepting everything.',
+    category: 'agent',
+  },
+];
 
 export const PROMPT_TEMPLATES: PromptTemplate[] = [
   // Quick Actions

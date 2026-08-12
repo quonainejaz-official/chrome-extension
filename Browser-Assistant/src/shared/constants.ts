@@ -51,5 +51,11 @@ export const API_TIMEOUT = 60000; // 60 seconds
 export const MAX_RETRIES = 3;
 export const RETRY_BASE_DELAY = 1000;
 export const PANEL_WIDTH_DEFAULT = 400;
+
+// ── Agent mode ──────────────────────────────────────────────────
+// Actions per run. High enough for a long checkout form, low enough that a
+// confused model cannot grind through a page indefinitely.
+export const DEFAULT_MAX_AGENT_STEPS = 14;
+export const MAX_AGENT_STEPS_LIMIT = 40;
 export const PANEL_WIDTH_MIN = 250;
 export const PANEL_WIDTH_MAX = 600;

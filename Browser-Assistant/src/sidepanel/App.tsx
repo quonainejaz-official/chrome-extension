@@ -14,7 +14,17 @@ export default function App() {
     deleteConversation,
     newConversation,
   } = useConversations();
-  const { messages, isLoading, error, sendMessage } = useChat(activeId);
+  const {
+    messages,
+    isLoading,
+    error,
+    sendMessage,
+    liveSteps,
+    confirmation,
+    answerConfirmation,
+    cancelAgent,
+    isAgentRunning,
+  } = useChat(activeId, selectConversation);
   const { context: pageContext, refresh: refreshContext } = usePageContext();
   const { isDark } = useTheme(settings?.theme ?? 'system');
 
@@ -75,6 +85,11 @@ export default function App() {
         onOpenSettings={() => setShowSettings(true)}
         settings={settings}
         inputRef={inputRef}
+        liveSteps={liveSteps}
+        confirmation={confirmation}
+        onConfirm={answerConfirmation}
+        onCancelAgent={cancelAgent}
+        isAgentRunning={isAgentRunning}
       />
 
       {/* Backdrop */}

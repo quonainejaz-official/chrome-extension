@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { Conversation, Message, Settings, PageContext } from '../../shared/types';
+import type { Conversation, Message, Settings, PageContext, FromBackgroundMessage } from '../../shared/types';
+import type { AgentStep } from '../../shared/actions';
+import type { ConfirmRequest } from '../components/ConfirmCard';
 import { sendMessageToBackground } from '../lib/messaging';
 
 export function useSettings() {
@@ -59,7 +61,9 @@ export function useConversations() {
   // Listen for updates from background
   useEffect(() => {
     const handler = (message: any) => {
-      if (message.type === 'AI_RESPONSE_CHUNK' && message.payload.done) {
+      if (message.type === 'AGENT_FINISHED') {
+        loadConversations();
+      } else if (message.type === 'AI_RESPONSE_CHUNK' && message.payload.done) {
         loadConversations();
       }
     };
@@ -78,10 +82,16 @@ export function useConversations() {
   };
 }
 
-export function useChat(conversationId: string | null) {
+export function useChat(
+  conversationId: string | null,
+  onConversationCreated?: (id: string) => void
+) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [liveSteps, setLiveSteps] = useState<AgentStep[]>([]);
+  const [confirmation, setConfirmation] = useState<ConfirmRequest | null>(null);
+  const [isAgentRunning, setIsAgentRunning] = useState(false);
   const streamingRef = useRef(false);
 
   // Load messages when conversation changes
@@ -97,52 +107,128 @@ export function useChat(conversationId: string | null) {
     });
   }, [conversationId]);
 
-  const sendMessage = useCallback(async (content: string, includePageContext: boolean = true) => {
-    if (!content.trim() || streamingRef.current) return;
-
-    streamingRef.current = true;
-    setIsLoading(true);
-    setError(null);
-
-    // Add user message optimistically
-    const userMsg: Message = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: content.trim(),
-      timestamp: Date.now(),
+  // Live agent events: step updates and confirmation prompts.
+  useEffect(() => {
+    const handler = (message: FromBackgroundMessage) => {
+      if (message.type === 'AGENT_STEP') {
+        const incoming = message.payload.step;
+        setLiveSteps((prev) => {
+          const idx = prev.findIndex((s) => s.id === incoming.id);
+          if (idx < 0) return [...prev, incoming];
+          const next = prev.slice();
+          next[idx] = incoming;
+          return next;
+        });
+      } else if (message.type === 'AGENT_CONFIRM_REQUEST') {
+        setConfirmation(message.payload);
+      }
     };
-    setMessages((prev) => [...prev, userMsg]);
+    chrome.runtime.onMessage.addListener(handler);
+    return () => chrome.runtime.onMessage.removeListener(handler);
+  }, []);
 
-    try {
-      const response = await sendMessageToBackground({
-        type: 'SEND_MESSAGE',
-        payload: { content: content.trim(), conversationId: conversationId ?? undefined, includePageContext },
+  const answerConfirmation = useCallback(
+    async (approved: boolean) => {
+      const pending = confirmation;
+      setConfirmation(null);
+      if (!pending) return;
+      await sendMessageToBackground({
+        type: 'AGENT_CONFIRM_DECISION',
+        payload: { id: pending.id, approved },
       });
+    },
+    [confirmation]
+  );
 
-      if (response.type === 'AI_RESPONSE_CHUNK') {
-        const assistantMsg: Message = {
-          id: response.payload.messageId,
-          role: 'assistant',
-          content: response.payload.content,
-          timestamp: Date.now(),
-        };
+  const cancelAgent = useCallback(async () => {
+    setConfirmation(null);
+    await sendMessageToBackground({ type: 'CANCEL_AGENT' });
+  }, []);
+
+  const sendMessage = useCallback(
+    async (content: string, includePageContext: boolean = true, agentMode: boolean = false) => {
+      if (!content.trim() || streamingRef.current) return;
+
+      streamingRef.current = true;
+      setIsLoading(true);
+      setIsAgentRunning(agentMode);
+      setLiveSteps([]);
+      setConfirmation(null);
+      setError(null);
+
+      // Add user message optimistically
+      const userMsg: Message = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: content.trim(),
+        timestamp: Date.now(),
+      };
+      setMessages((prev) => [...prev, userMsg]);
+
+      const appendAssistant = (assistantMsg: Message) => {
         setMessages((prev) => {
-          // Remove the optimistic user message if we're starting a new conversation
+          // Drop the optimistic user message when a fresh conversation was
+          // created, so it is not duplicated by the stored copy.
           const filtered = conversationId ? prev : prev.filter((m) => m.id !== userMsg.id);
           return [...filtered, userMsg, assistantMsg];
         });
-      } else if (response.type === 'ERROR') {
-        setError(response.payload.message);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to send message');
-    } finally {
-      setIsLoading(false);
-      streamingRef.current = false;
-    }
-  }, [conversationId]);
+      };
 
-  return { messages, isLoading, error, sendMessage };
+      try {
+        const response = agentMode
+          ? await sendMessageToBackground({
+              type: 'RUN_AGENT',
+              payload: { goal: content.trim(), conversationId: conversationId ?? undefined },
+            })
+          : await sendMessageToBackground({
+              type: 'SEND_MESSAGE',
+              payload: { content: content.trim(), conversationId: conversationId ?? undefined, includePageContext },
+            });
+
+        if (response.type === 'AGENT_FINISHED') {
+          appendAssistant({
+            id: response.payload.messageId,
+            role: 'assistant',
+            content: response.payload.content,
+            timestamp: Date.now(),
+            metadata: { agent: true, steps: response.payload.steps },
+          });
+          setLiveSteps([]);
+          if (!conversationId) onConversationCreated?.(response.payload.conversationId);
+        } else if (response.type === 'AI_RESPONSE_CHUNK') {
+          appendAssistant({
+            id: response.payload.messageId,
+            role: 'assistant',
+            content: response.payload.content,
+            timestamp: Date.now(),
+          });
+          if (!conversationId) onConversationCreated?.(response.payload.conversationId);
+        } else if (response.type === 'ERROR') {
+          setError(response.payload.message);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to send message');
+      } finally {
+        setIsLoading(false);
+        setIsAgentRunning(false);
+        setConfirmation(null);
+        streamingRef.current = false;
+      }
+    },
+    [conversationId, onConversationCreated]
+  );
+
+  return {
+    messages,
+    isLoading,
+    error,
+    sendMessage,
+    liveSteps,
+    confirmation,
+    answerConfirmation,
+    cancelAgent,
+    isAgentRunning,
+  };
 }
 
 export function usePageContext() {

@@ -1,3 +1,5 @@
+import type { AgentAction, AgentStep } from './actions';
+
 // ── Side Panel → Background ──────────────────────────────────────
 
 export interface SendMessageRequest {
@@ -38,6 +40,28 @@ export interface GetSettingsRequest {
 
 export interface TogglePanelRequest {
   type: 'TOGGLE_PANEL';
+}
+
+/** Kick off an agent run: the model drives the page until the goal is met. */
+export interface RunAgentRequest {
+  type: 'RUN_AGENT';
+  payload: {
+    goal: string;
+    conversationId?: string;
+  };
+}
+
+/** The user answered a confirmation card in the side panel. */
+export interface AgentConfirmDecisionRequest {
+  type: 'AGENT_CONFIRM_DECISION';
+  payload: {
+    id: string;
+    approved: boolean;
+  };
+}
+
+export interface CancelAgentRequest {
+  type: 'CANCEL_AGENT';
 }
 
 // ── Background → Side Panel ─────────────────────────────────────
@@ -93,6 +117,41 @@ export interface PanelToggledResponse {
   type: 'PANEL_TOGGLED';
 }
 
+/** Broadcast as each agent step starts and finishes. */
+export interface AgentStepEvent {
+  type: 'AGENT_STEP';
+  payload: {
+    runId: string;
+    step: AgentStep;
+  };
+}
+
+/** Broadcast when a consequential action needs the user's go-ahead. */
+export interface AgentConfirmRequestEvent {
+  type: 'AGENT_CONFIRM_REQUEST';
+  payload: {
+    runId: string;
+    id: string;
+    title: string;
+    detail: string;
+    url: string;
+    action: AgentAction;
+  };
+}
+
+export interface AgentFinishedResponse {
+  type: 'AGENT_FINISHED';
+  payload: {
+    runId: string;
+    conversationId: string;
+    messageId: string;
+    content: string;
+    steps: AgentStep[];
+    /** True when the run stopped early (cancelled, blocked, step limit). */
+    incomplete: boolean;
+  };
+}
+
 // ── Background → Content Script ─────────────────────────────────
 
 export interface ExtractContentRequest {
@@ -134,7 +193,10 @@ export type ToBackgroundMessage =
   | DeleteConversationRequest
   | SaveSettingsRequest
   | GetSettingsRequest
-  | TogglePanelRequest;
+  | TogglePanelRequest
+  | RunAgentRequest
+  | AgentConfirmDecisionRequest
+  | CancelAgentRequest;
 
 export type FromBackgroundMessage =
   | AIResponseChunk
@@ -144,7 +206,10 @@ export type FromBackgroundMessage =
   | SettingsResponse
   | SettingsSavedResponse
   | ErrorResponse
-  | PanelToggledResponse;
+  | PanelToggledResponse
+  | AgentStepEvent
+  | AgentConfirmRequestEvent
+  | AgentFinishedResponse;
 
 export type ToContentMessage = ExtractContentRequest | GetSelectionRequest;
 
@@ -191,8 +256,66 @@ export interface Message {
     tokensUsed?: number;
     model?: string;
     pageContextIncluded?: boolean;
+    /** Present when this reply came from an agent run. */
+    steps?: AgentStep[];
+    agent?: boolean;
   };
 }
+
+/**
+ * Details the agent may type into forms on the user's behalf.
+ *
+ * Deliberately has no fields for passwords, card numbers, CVV codes or
+ * government IDs — those stay out of the extension entirely and the DOM
+ * executor refuses to fill them even if a page asks.
+ */
+export interface UserProfile {
+  fullName: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  company: string;
+  jobTitle: string;
+  addressLine1: string;
+  addressLine2: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  country: string;
+  website: string;
+  /** Free-form extras, e.g. "GitHub" → "github.com/me". */
+  custom: { id: string; label: string; value: string }[];
+}
+
+export const EMPTY_PROFILE: UserProfile = {
+  fullName: '',
+  firstName: '',
+  lastName: '',
+  email: '',
+  phone: '',
+  company: '',
+  jobTitle: '',
+  addressLine1: '',
+  addressLine2: '',
+  city: '',
+  state: '',
+  postalCode: '',
+  country: '',
+  website: '',
+  custom: [],
+};
+
+/**
+ * When the agent must stop and ask before doing something consequential
+ * (submitting, sending, navigating away).
+ *
+ * - `always` — confirm every consequential action.
+ * - `smart`  — proceed when the user's own message clearly asked for it,
+ *              otherwise confirm. High-risk actions still always confirm.
+ * - `never`  — never confirm. High-risk actions still always confirm.
+ */
+export type ConfirmMode = 'always' | 'smart' | 'never';
 
 export interface TokenUsage {
   promptTokens: number;
@@ -234,4 +357,14 @@ export interface Settings {
   maxConversations: number;
   streamingEnabled: boolean;
   fontSize: 'small' | 'medium' | 'large';
+
+  // ── Agent mode ────────────────────────────────────────────────
+  /** Master switch for the "take actions on the page" capability. */
+  agentEnabled: boolean;
+  /** Whether the composer starts in agent mode. */
+  agentByDefault: boolean;
+  confirmMode: ConfirmMode;
+  /** Hard cap on actions per run, so a confused model cannot loop forever. */
+  maxAgentSteps: number;
+  profile: UserProfile;
 }

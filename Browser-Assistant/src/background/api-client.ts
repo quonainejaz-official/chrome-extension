@@ -102,7 +102,34 @@ export async function sendChatMessage(
   history?: Message[],
   callbacks?: StreamCallbacks
 ): Promise<string> {
-  const messages = buildMessages(userMessage, pageContext, history);
+  return streamChat(config, buildMessages(userMessage, pageContext, history), callbacks);
+}
+
+export interface ChatTurn {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+/**
+ * Raw completion with caller-supplied messages — used by the agent loop, which
+ * builds its own transcript of actions and observations. Returns the full text
+ * (no streaming callbacks: the agent needs a complete JSON object before it can
+ * do anything with it).
+ */
+export async function chatOnce(
+  config: ResolvedModel,
+  messages: ChatTurn[],
+  temperature = 0.1
+): Promise<string> {
+  return streamChat(config, messages, undefined, temperature);
+}
+
+async function streamChat(
+  config: ResolvedModel,
+  messages: { role: string; content: string }[],
+  callbacks?: StreamCallbacks,
+  temperature = 0.7
+): Promise<string> {
   const chatEndpoint = resolveChatEndpoint(config.endpoint);
 
   let lastError: Error | null = null;
@@ -122,7 +149,7 @@ export async function sendChatMessage(
           model: config.model,
           messages,
           stream: true,
-          temperature: 0.7,
+          temperature,
           max_tokens: 4096,
         }),
         signal: controller.signal,

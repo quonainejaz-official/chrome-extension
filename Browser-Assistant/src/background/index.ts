@@ -14,6 +14,7 @@ import {
   getActiveTabId,
   getActiveTab,
 } from './content-bridge';
+import { runAgent, type ConfirmationRequest } from './agent';
 import type {
   ToBackgroundMessage,
   FromBackgroundMessage,
@@ -23,10 +24,48 @@ import type {
   Settings,
   ResolvedModel,
 } from '../shared/types';
+import type { AgentStep } from '../shared/actions';
 import { OPENCODE_ZEN_BASE_URL, DEFAULT_OPENCODE_ZEN_KEY, DEFAULT_MODEL_ID } from '../shared/constants';
 
 function generateId(): string {
   return crypto.randomUUID();
+}
+
+// ── Agent run state ─────────────────────────────────────────────
+
+/** Only one run at a time — two agents fighting over one tab helps nobody. */
+let activeRun: { id: string; cancelled: boolean } | null = null;
+
+/** Confirmation cards awaiting an answer from the side panel. */
+const pendingConfirmations = new Map<string, (approved: boolean) => void>();
+
+// The panel may be closed, in which case there is nobody to receive the event.
+function broadcast(message: FromBackgroundMessage): void {
+  chrome.runtime.sendMessage(message).catch(() => {
+    /* no listener */
+  });
+}
+
+function askForConfirmation(runId: string, request: ConfirmationRequest): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (approved: boolean) => {
+      if (settled) return;
+      settled = true;
+      pendingConfirmations.delete(request.id);
+      resolve(approved);
+    };
+
+    pendingConfirmations.set(request.id, finish);
+    broadcast({
+      type: 'AGENT_CONFIRM_REQUEST',
+      payload: { runId, ...request },
+    });
+
+    // If the user walks away, treat silence as "no" rather than hanging the
+    // service worker forever.
+    setTimeout(() => finish(false), 5 * 60 * 1000);
+  });
 }
 
 // Turn the user's selection into a concrete endpoint/model/key.
@@ -219,6 +258,140 @@ async function handleSidePanelMessage(
           done: true,
         },
       };
+    }
+
+    case 'RUN_AGENT': {
+      const { goal, conversationId } = message.payload;
+      const settings = await getSettings();
+
+      if (!settings.agentEnabled) {
+        return { type: 'ERROR', payload: { code: 'AGENT_DISABLED', message: 'Agent mode is turned off in Settings.', retryable: false } };
+      }
+      if (activeRun) {
+        return { type: 'ERROR', payload: { code: 'AGENT_BUSY', message: 'An agent run is already in progress.', retryable: true } };
+      }
+
+      const tab = await getActiveTab();
+      if (!tab?.id) {
+        return { type: 'ERROR', payload: { code: 'NO_TAB', message: 'No web page to work on. Open a normal http(s) page first.', retryable: true } };
+      }
+      if (!/^https?:/i.test(tab.url ?? '')) {
+        return {
+          type: 'ERROR',
+          payload: {
+            code: 'RESTRICTED_PAGE',
+            message: 'Chrome blocks automation on this page (chrome://, the Web Store and the new-tab page). Open a normal website and try again.',
+            retryable: false,
+          },
+        };
+      }
+
+      const modelConfig = resolveModel(settings);
+      if (modelConfig.endpoint === OPENCODE_ZEN_BASE_URL && !modelConfig.apiKey) {
+        return { type: 'ERROR', payload: { code: 'NO_KEY', message: 'No API key available. Add your OpenCode Zen key in Settings.', retryable: false } };
+      }
+
+      // Get or create the conversation and record the user's goal.
+      let conversation: Conversation;
+      if (conversationId) {
+        const existing = await getConversation(conversationId);
+        if (!existing) {
+          return { type: 'ERROR', payload: { code: 'NOT_FOUND', message: 'Conversation not found', retryable: false } };
+        }
+        conversation = existing;
+      } else {
+        conversation = {
+          id: generateId(),
+          title: generateTitle(goal),
+          tabUrl: tab.url ?? '',
+          tabTitle: tab.title ?? '',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          messages: [],
+          archived: false,
+        };
+      }
+
+      const priorMessages = conversation.messages.slice();
+      conversation.messages.push({
+        id: generateId(),
+        role: 'user',
+        content: goal,
+        timestamp: Date.now(),
+      });
+      conversation.updatedAt = Date.now();
+      await saveConversation(conversation);
+
+      const runId = generateId();
+      activeRun = { id: runId, cancelled: false };
+
+      let result: { summary: string; steps: AgentStep[]; incomplete: boolean };
+      try {
+        result = await runAgent({
+          runId,
+          tabId: tab.id,
+          goal,
+          history: priorMessages,
+          settings,
+          model: modelConfig,
+          emitStep: (step) => broadcast({ type: 'AGENT_STEP', payload: { runId, step } }),
+          requestConfirmation: (request) => askForConfirmation(runId, request),
+          isCancelled: () => activeRun?.cancelled ?? true,
+        });
+      } catch (err) {
+        result = {
+          summary: 'The run stopped unexpectedly: ' + (err instanceof Error ? err.message : String(err)),
+          steps: [],
+          incomplete: true,
+        };
+      } finally {
+        activeRun = null;
+        for (const resolve of pendingConfirmations.values()) resolve(false);
+        pendingConfirmations.clear();
+      }
+
+      const assistantMessage: Message = {
+        id: generateId(),
+        role: 'assistant',
+        content: result.summary,
+        timestamp: Date.now(),
+        metadata: { agent: true, steps: result.steps, model: modelConfig.model },
+      };
+      conversation.messages.push(assistantMessage);
+      if (conversation.messages.filter((m) => m.role === 'user').length === 1) {
+        conversation.title = generateTitle(goal);
+      }
+      conversation.updatedAt = Date.now();
+      await saveConversation(conversation);
+
+      const finished: FromBackgroundMessage = {
+        type: 'AGENT_FINISHED',
+        payload: {
+          runId,
+          conversationId: conversation.id,
+          messageId: assistantMessage.id,
+          content: result.summary,
+          steps: result.steps,
+          incomplete: result.incomplete,
+        },
+      };
+      // Also broadcast so the conversation list refreshes even though the
+      // caller gets this same object as its response.
+      broadcast(finished);
+      return finished;
+    }
+
+    case 'AGENT_CONFIRM_DECISION': {
+      const resolve = pendingConfirmations.get(message.payload.id);
+      if (resolve) resolve(message.payload.approved);
+      return { type: 'PANEL_TOGGLED' };
+    }
+
+    case 'CANCEL_AGENT': {
+      if (activeRun) activeRun.cancelled = true;
+      for (const resolve of pendingConfirmations.values()) resolve(false);
+      pendingConfirmations.clear();
+      return { type: 'PANEL_TOGGLED' };
     }
 
     case 'GET_PAGE_CONTEXT': {

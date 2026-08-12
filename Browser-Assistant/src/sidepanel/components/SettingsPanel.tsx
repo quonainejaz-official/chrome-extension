@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
-import type { Settings, CustomModel } from '../../shared/types';
-import { BUILTIN_MODELS, DEFAULT_MODEL_ID } from '../../shared/constants';
+import type { Settings, CustomModel, ConfirmMode } from '../../shared/types';
+import { BUILTIN_MODELS, DEFAULT_MODEL_ID, MAX_AGENT_STEPS_LIMIT } from '../../shared/constants';
 import { BackIcon, PlusIcon, TrashIcon, CheckIcon } from './Icons';
+import { ProfileSection } from './ProfileSection';
 
 interface Props {
   settings: Settings;
@@ -12,6 +13,41 @@ interface Props {
 
 const inputCls =
   'w-full px-3 py-2 rounded-lg border text-sm bg-[var(--bg-primary)] border-[var(--border-color)] text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition';
+
+function Toggle({
+  label,
+  desc,
+  checked,
+  onChange,
+}: {
+  label: string;
+  desc?: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        <p className="text-sm text-[var(--text-secondary)]">{label}</p>
+        {desc && <p className="text-[11px] text-[var(--text-muted)] mt-0.5">{desc}</p>}
+      </div>
+      <button
+        onClick={() => onChange(!checked)}
+        className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 mt-0.5 ${
+          checked ? 'bg-[var(--accent)]' : 'bg-[var(--bg-tertiary)]'
+        }`}
+        aria-pressed={checked}
+        aria-label={label}
+      >
+        <span
+          className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transform transition-transform ${
+            checked ? 'translate-x-5' : 'translate-x-0'
+          }`}
+        />
+      </button>
+    </div>
+  );
+}
 
 function Section({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
   return (
@@ -210,6 +246,65 @@ export function SettingsPanel({ settings, onSave, onBack }: Props) {
               Add custom model
             </button>
           )}
+        </Section>
+
+        {/* Agent mode */}
+        <Section
+          title="Agent mode"
+          desc="Lets the assistant act on the page — click, type, choose from dropdowns, tick boxes and scroll — instead of only reading it."
+        >
+          <div className="space-y-3">
+            <Toggle
+              label="Allow actions on pages"
+              checked={settings.agentEnabled}
+              onChange={(v) => onSave({ agentEnabled: v })}
+            />
+            <Toggle
+              label="Start new chats in agent mode"
+              desc="Otherwise use the hand button in the composer to switch it on per chat."
+              checked={settings.agentByDefault}
+              onChange={(v) => onSave({ agentByDefault: v })}
+            />
+          </div>
+        </Section>
+
+        {/* Confirmation policy */}
+        <Section
+          title="Ask before submitting"
+          desc="Payments, purchases and account deletion always ask, whatever you pick here."
+        >
+          <select
+            value={settings.confirmMode}
+            onChange={(e) => onSave({ confirmMode: e.target.value as ConfirmMode })}
+            className={inputCls}
+          >
+            <option value="always">Always ask before submitting or leaving the page</option>
+            <option value="smart">Ask unless I clearly asked for it (recommended)</option>
+            <option value="never">Never ask — just do it</option>
+          </select>
+
+          <div className="pt-2">
+            <label className="block text-xs font-medium mb-1 text-[var(--text-secondary)]">
+              Maximum actions per run: {settings.maxAgentSteps}
+            </label>
+            <input
+              type="range"
+              min={3}
+              max={MAX_AGENT_STEPS_LIMIT}
+              step={1}
+              value={settings.maxAgentSteps}
+              onChange={(e) => onSave({ maxAgentSteps: Number(e.target.value) })}
+              className="w-full accent-[var(--accent)]"
+            />
+            <p className="text-[11px] text-[var(--text-muted)] mt-1">
+              A safety stop. Long forms need more; a lower number keeps a confused model on a short leash.
+            </p>
+          </div>
+        </Section>
+
+        {/* Autofill profile */}
+        <Section title="Your details" desc="What the agent may type into forms on your behalf.">
+          <ProfileSection profile={settings.profile} onSave={(profile) => onSave({ profile })} />
         </Section>
 
         {/* Theme */}

@@ -20,6 +20,7 @@
   --ai-text: #0f172a;
   --error: #dc2626;
   --success: #16a34a;
+  --warning: #d97706;
 }
 
 .dark {
@@ -40,6 +41,7 @@
   --ai-text: #f1f5f9;
   --error: #f87171;
   --success: #4ade80;
+  --warning: #fbbf24;
 }
 
 * {

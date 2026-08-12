@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "AI Page Assistant",
-  "version": "1.0.0",
-  "description": "AI-powered side panel that helps you understand, summarize, and translate any webpage content.",
+  "version": "1.1.0",
+  "description": "AI side panel that reads any webpage and, on request, acts on it for you — clicking, filling forms, choosing options and scrolling.",
   "permissions": [
     "activeTab",
     "storage",
