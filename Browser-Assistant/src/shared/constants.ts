@@ -47,15 +47,28 @@ export const MAX_SELECTION_LENGTH = 5000;
 export const MAX_MESSAGES_PER_CONVERSATION = 200;
 export const MAX_CONVERSATIONS = 50;
 export const PAGE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-export const API_TIMEOUT = 60000; // 60 seconds
+export const API_TIMEOUT = 60000; // 60 seconds to first byte
+// Once tokens are flowing, a much shorter gap means the stream has stalled.
+export const STREAM_IDLE_TIMEOUT = 30000;
 export const MAX_RETRIES = 3;
 export const RETRY_BASE_DELAY = 1000;
+// Ceiling for a single backoff sleep. A provider that asks for a two-minute
+// Retry-After should not freeze an agent run for two minutes.
+export const MAX_RETRY_DELAY = 15000;
 export const PANEL_WIDTH_DEFAULT = 400;
 
 // ── Agent mode ──────────────────────────────────────────────────
 // Actions per run. High enough for a long checkout form, low enough that a
 // confused model cannot grind through a page indefinitely.
+// Model round-trips per run. One turn can now carry a whole batch of actions,
+// so this is a planning budget, not an action budget.
 export const DEFAULT_MAX_AGENT_STEPS = 14;
 export const MAX_AGENT_STEPS_LIMIT = 40;
+
+// Total actions per run, counted separately. A long checkout form is easily 30
+// fields; capping actions and turns with one number stopped such a form less
+// than halfway through.
+export const DEFAULT_MAX_AGENT_ACTIONS = 60;
+export const MAX_AGENT_ACTIONS_LIMIT = 120;
 export const PANEL_WIDTH_MIN = 250;
 export const PANEL_WIDTH_MAX = 600;

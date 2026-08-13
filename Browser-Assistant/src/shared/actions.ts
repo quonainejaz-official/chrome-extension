@@ -188,7 +188,44 @@ export interface ActionResult {
   message: string;
   /** Set when the action caused (or likely caused) a navigation. */
   navigated?: boolean;
+  /**
+   * The action opened a widget or otherwise changed the page enough that any
+   * further action in the same batch would be aiming at stale refs.
+   */
+  endBatch?: boolean;
 }
+
+// ── Batching ────────────────────────────────────────────────────
+
+/**
+ * Whether more actions may follow this one inside a single batch.
+ *
+ * `continue` actions only mutate the field they address, so a whole form can
+ * be filled in one model turn. `terminal` actions make the page react —
+ * navigating, opening a menu, submitting — after which every ref the model
+ * planned against is potentially wrong, so the batch has to stop and re-look.
+ */
+export type BatchClass = 'continue' | 'terminal';
+
+export function batchClass(action: AgentAction, element?: SnapshotElement): BatchClass {
+  switch (action.type) {
+    case 'fill':
+      // Enter submits or triggers a search — the page reacts.
+      return action.pressEnter ? 'terminal' : 'continue';
+    case 'select':
+      // A real <select> is set in place. A custom dropdown has to be opened
+      // and then picked from, which needs a fresh snapshot.
+      return element && element.role !== 'select' ? 'terminal' : 'continue';
+    case 'setCheckbox':
+    case 'scrollToElement':
+      return 'continue';
+    default:
+      return 'terminal';
+  }
+}
+
+/** Caps how much a single model turn may plan, so one bad reply can't run away. */
+export const MAX_BATCH_ACTIONS = 8;
 
 // ── Trace ───────────────────────────────────────────────────────
 

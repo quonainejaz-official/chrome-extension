@@ -16,7 +16,11 @@ import type { PageSnapshot, AgentAction, ActionResult } from '../shared/actions'
  * Refs are re-assigned from scratch on every call, so a snapshot is only valid
  * until the next one — the agent loop always acts on the freshest snapshot.
  */
-export function snapshotInPage(maxElements: number, maxText: number): Omit<PageSnapshot, 'frameCount'> {
+export function snapshotInPage(
+  maxElements: number,
+  maxText: number,
+  wantText: boolean
+): Omit<PageSnapshot, 'frameCount'> {
   const REF = 'data-aipa-ref';
   const FORM_REF = 'data-aipa-form';
 
@@ -346,9 +350,14 @@ export function snapshotInPage(maxElements: number, maxText: number): Omit<PageS
   }
 
   // ── readable text digest ──
+  // Skipped on most turns: it ends in document.body.innerText, which forces a
+  // full-page layout and materializes the entire rendered document as a string
+  // before being sliced down to a few KB.
   let text = '';
-  const article = document.querySelector('article') as HTMLElement | null;
-  if (article && (article.innerText || '').trim().length > 120) {
+  const article = wantText ? (document.querySelector('article') as HTMLElement | null) : null;
+  if (!wantText) {
+    text = '';
+  } else if (article && (article.innerText || '').trim().length > 120) {
     text = article.innerText;
   } else {
     const mains = ['main', '[role="main"]', '#content', '#main-content', '.content', '.main-content'];

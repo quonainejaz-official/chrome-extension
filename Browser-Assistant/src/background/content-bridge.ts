@@ -10,17 +10,20 @@ let currentTabId: number | null = null;
 export async function getActiveTab(): Promise<chrome.tabs.Tab | null> {
   // Prefer the last focused normal browser window (the side panel counts as a
   // separate surface, so `currentWindow` can be unreliable once it has focus).
-  let tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  // windowType: 'normal' keeps a focused popup, devtools or app window from
+  // winning the lookup — the comment above always claimed this, but none of
+  // the queries actually filtered on it.
+  let tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true, windowType: 'normal' });
   let tab = tabs[0];
 
   if (!tab || !isReadableUrl(tab.url)) {
-    tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    tabs = await chrome.tabs.query({ active: true, currentWindow: true, windowType: 'normal' });
     tab = tabs[0];
   }
 
   if (!tab || !isReadableUrl(tab.url)) {
     // Last resort: any active tab across normal windows.
-    const all = await chrome.tabs.query({ active: true });
+    const all = await chrome.tabs.query({ active: true, windowType: 'normal' });
     tab = all.find((t) => isReadableUrl(t.url)) ?? all[0];
   }
 

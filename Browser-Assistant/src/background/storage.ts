@@ -4,6 +4,7 @@ import {
   MAX_CONVERSATIONS,
   DEFAULT_MODEL_ID,
   DEFAULT_MAX_AGENT_STEPS,
+  DEFAULT_MAX_AGENT_ACTIONS,
 } from '../shared/constants';
 
 const DEFAULT_SETTINGS: Settings = {
@@ -20,9 +21,9 @@ const DEFAULT_SETTINGS: Settings = {
   streamingEnabled: true,
   fontSize: 'medium',
   agentEnabled: true,
-  agentByDefault: false,
   confirmMode: 'smart',
   maxAgentSteps: DEFAULT_MAX_AGENT_STEPS,
+  maxAgentActions: DEFAULT_MAX_AGENT_ACTIONS,
   profile: EMPTY_PROFILE,
 };
 

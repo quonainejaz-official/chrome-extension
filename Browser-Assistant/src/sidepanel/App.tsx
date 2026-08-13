@@ -10,6 +10,7 @@ export default function App() {
   const {
     conversations,
     activeId,
+    sessionKey,
     selectConversation,
     deleteConversation,
     newConversation,
@@ -24,8 +25,14 @@ export default function App() {
     answerConfirmation,
     cancelAgent,
     isAgentRunning,
-  } = useChat(activeId, selectConversation);
-  const { context: pageContext, refresh: refreshContext } = usePageContext();
+    status,
+  } = useChat(activeId, sessionKey, selectConversation);
+  const {
+    context: pageContext,
+    refresh: refreshContext,
+    loading: contextLoading,
+    error: contextError,
+  } = usePageContext();
   const { isDark } = useTheme(settings?.theme ?? 'system');
 
   const [showSettings, setShowSettings] = useState(false);
@@ -73,6 +80,9 @@ export default function App() {
     <div className="h-screen w-full relative overflow-hidden bg-[var(--bg-primary)] text-[var(--text-primary)]">
       {/* Chat fills the whole panel; sidebar is an overlay drawer for any width */}
       <ChatInterface
+        /* Remount on "New chat" so the composer draft and per-chat toggles
+           reset too, not just the message list. */
+        key={sessionKey}
         messages={messages}
         isLoading={isLoading}
         error={error}
@@ -90,6 +100,9 @@ export default function App() {
         onConfirm={answerConfirmation}
         onCancelAgent={cancelAgent}
         isAgentRunning={isAgentRunning}
+        status={status}
+        contextLoading={contextLoading}
+        contextError={contextError}
       />
 
       {/* Backdrop */}

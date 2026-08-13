@@ -1,10 +1,12 @@
 import { useState, useRef, useEffect, type RefObject } from 'react';
 import type { Message, PageContext, Settings } from '../../shared/types';
 import type { AgentStep } from '../../shared/actions';
+import type { AgentStatus } from '../hooks/useHooks';
 import { PROMPT_TEMPLATES, AGENT_TEMPLATES, type PromptTemplate } from '../lib/prompts';
 import { renderMarkdown, detectDir } from '../lib/markdown';
 import { ActionTrace } from './ActionTrace';
-import { ConfirmCard, type ConfirmRequest } from './ConfirmCard';
+import { RunPanel } from './RunPanel';
+import { type ConfirmRequest } from './ConfirmCard';
 import {
   MenuIcon,
   RefreshIcon,
@@ -26,7 +28,7 @@ interface Props {
   messages: Message[];
   isLoading: boolean;
   error: string | null;
-  onSend: (content: string, includeContext: boolean, agentMode: boolean) => void;
+  onSend: (content: string, includeContext: boolean) => void;
   pageContext: PageContext | null;
   onRefreshContext: () => void;
   isDark: boolean;
@@ -40,6 +42,17 @@ interface Props {
   onConfirm: (approved: boolean) => void;
   onCancelAgent: () => void;
   isAgentRunning: boolean;
+  status: AgentStatus | null;
+  contextLoading: boolean;
+  contextError: string | null;
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
 }
 
 function IconButton({
@@ -160,27 +173,33 @@ export function ChatInterface({
   onConfirm,
   onCancelAgent,
   isAgentRunning,
+  status,
+  contextLoading,
+  contextError,
 }: Props) {
   const [input, setInput] = useState('');
   const [includeContext, setIncludeContext] = useState(settings.autoContext);
-  const [agentMode, setAgentMode] = useState(settings.agentEnabled && settings.agentByDefault);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [runStartedAt, setRunStartedAt] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const internalInputRef = useRef<HTMLTextAreaElement>(null);
   const inputRef = externalInputRef ?? internalInputRef;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isLoading, liveSteps, confirmation]);
+  }, [messages, isLoading, liveSteps, confirmation, status]);
 
-  // Agent mode is meaningless once the capability is switched off in Settings.
+  // Stamp the clock the moment a run begins so RunPanel can show elapsed time.
   useEffect(() => {
-    if (!settings.agentEnabled) setAgentMode(false);
-  }, [settings.agentEnabled]);
+    if (isAgentRunning && runStartedAt === 0) setRunStartedAt(Date.now());
+    if (!isAgentRunning) setRunStartedAt(0);
+  }, [isAgentRunning, runStartedAt]);
+
+  const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user')?.content ?? '';
 
   const handleSubmit = () => {
     if (!input.trim() || isLoading) return;
-    onSend(input.trim(), includeContext, agentMode);
+    onSend(input.trim(), includeContext);
     setInput('');
     if (inputRef.current) {
       inputRef.current.style.height = 'auto';
@@ -200,7 +219,11 @@ export function ChatInterface({
     e.target.style.height = Math.min(e.target.scrollHeight, 140) + 'px';
   };
 
-  const quickPrompts = agentMode ? AGENT_TEMPLATES : PROMPT_TEMPLATES.filter((t) => t.category === 'quick');
+  // One starter set covering both halves of what it does — there is no mode to
+  // pick any more, so the examples should teach that by example.
+  const quickPrompts = settings.agentEnabled
+    ? [...PROMPT_TEMPLATES.filter((t) => t.category === 'quick').slice(0, 2), ...AGENT_TEMPLATES.slice(0, 2)]
+    : PROMPT_TEMPLATES.filter((t) => t.category === 'quick');
 
   return (
     <div className="flex flex-col h-full min-w-0">
@@ -218,18 +241,16 @@ export function ChatInterface({
           </div>
         </div>
         <div className="flex items-center gap-0.5 flex-shrink-0">
-          {pageContext && (
-            <span
-              className="hidden min-[300px]:flex items-center gap-1 text-[11px] px-2 py-1 rounded-full max-w-[100px] text-[var(--text-muted)] bg-[var(--bg-tertiary)]"
-              title={pageContext.title}
-            >
-              <DocumentIcon className="w-3 h-3 flex-shrink-0" />
-              <span className="truncate">{pageContext.pageType === 'pdf' ? 'PDF' : 'Page'}</span>
-            </span>
-          )}
-          <IconButton onClick={onRefreshContext} title="Refresh page context">
-            <RefreshIcon className="w-[17px] h-[17px]" />
-          </IconButton>
+          <button
+            onClick={onRefreshContext}
+            disabled={contextLoading}
+            title={contextError ?? (pageContext ? `Re-read: ${pageContext.title}` : 'Re-read the current page')}
+            aria-label="Re-read the current page"
+            className="p-2 rounded-lg transition-colors flex-shrink-0 text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] disabled:opacity-60"
+            style={contextError ? { color: 'var(--warning)' } : undefined}
+          >
+            <RefreshIcon className={`w-[17px] h-[17px] ${contextLoading ? 'animate-spin' : ''}`} />
+          </button>
           <IconButton onClick={onToggleTheme} title="Toggle theme">
             {isDark ? <SunIcon className="w-[17px] h-[17px]" /> : <MoonIcon className="w-[17px] h-[17px]" />}
           </IconButton>
@@ -250,8 +271,8 @@ export function ChatInterface({
               AI Page Assistant
             </h2>
             <p className="text-sm max-w-xs mb-6 text-[var(--text-muted)]">
-              {agentMode
-                ? 'Tell me what to do on this page — click, fill in forms, pick from dropdowns. I ask before anything gets sent.'
+              {settings.agentEnabled
+                ? 'Ask me about this page, or just tell me what to do on it — I work out which you meant. I fill forms, click, and choose, and I ask before anything gets sent.'
                 : 'Ask questions, get summaries, translate content, and more about the current page.'}
             </p>
 
@@ -329,15 +350,21 @@ export function ChatInterface({
           );
         })}
 
-        {/* Live agent trace + the confirmation gate */}
-        {liveSteps.length > 0 && (
-          <div className="space-y-2">
-            <ActionTrace steps={liveSteps} live />
-            {confirmation && <ConfirmCard request={confirmation} onDecide={onConfirm} />}
-          </div>
+        {/* The live run — goal, timeline, current status, stop control */}
+        {(isAgentRunning || liveSteps.length > 0) && (
+          <RunPanel
+            goal={lastUserMessage}
+            steps={liveSteps}
+            status={status}
+            confirmation={confirmation}
+            onConfirm={onConfirm}
+            onStop={onCancelAgent}
+            startedAt={runStartedAt || Date.now()}
+            running={isAgentRunning}
+          />
         )}
 
-        {isLoading && !confirmation && liveSteps.length === 0 && (
+        {isLoading && !isAgentRunning && liveSteps.length === 0 && (
           <div className="flex justify-start">
             <div className="px-3.5 py-3 rounded-2xl rounded-bl-md" style={{ background: 'var(--ai-bubble)' }}>
               <div className="flex gap-1">
@@ -359,23 +386,35 @@ export function ChatInterface({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Agent-mode banner: this is the difference between "reads the page"
-          and "operates the page", so it should never be a surprise. */}
-      {agentMode && (
-        <div className="px-4 py-1.5 text-[11px] flex-shrink-0 flex items-center gap-1.5 text-[var(--accent)] bg-[var(--accent-soft)]">
-          <HandIcon className="w-3.5 h-3.5 flex-shrink-0" />
-          <span className="truncate">
-            Agent mode — I can click, type and choose on this page. I ask before submitting.
-          </span>
+      {/* Which page the assistant is looking at right now. It follows the
+          active tab, so this doubles as confirmation that it kept up. */}
+      {contextError ? (
+        <div
+          className="px-4 py-1.5 text-[11px] flex-shrink-0 flex items-center gap-1.5"
+          style={{ color: 'var(--warning)', background: 'color-mix(in srgb, var(--warning) 12%, transparent)' }}
+        >
+          <AlertIcon className="w-3.5 h-3.5 flex-shrink-0" />
+          <span className="truncate">{contextError}</span>
+          <button onClick={onRefreshContext} className="underline underline-offset-2 flex-shrink-0">
+            Retry
+          </button>
         </div>
-      )}
-
-      {/* Context indicator */}
-      {pageContext && includeContext && !agentMode && (
-        <div className="px-4 py-1.5 text-xs flex-shrink-0 truncate flex items-center gap-1.5 text-[var(--text-muted)] bg-[var(--bg-secondary)]" title={pageContext.title}>
-          <DocumentIcon className="w-3.5 h-3.5 flex-shrink-0" />
-          <span className="truncate">{pageContext.title.slice(0, 50)}{pageContext.title.length > 50 ? '…' : ''}</span>
-        </div>
+      ) : (
+        pageContext &&
+        includeContext && (
+          <div
+            className="px-4 py-1.5 text-[11px] flex-shrink-0 flex items-center gap-1.5 text-[var(--text-muted)] bg-[var(--bg-secondary)]"
+            title={pageContext.url}
+          >
+            {isAgentRunning ? (
+              <HandIcon className="w-3.5 h-3.5 flex-shrink-0 text-[var(--accent)]" />
+            ) : (
+              <DocumentIcon className="w-3.5 h-3.5 flex-shrink-0" />
+            )}
+            <span className="truncate">{pageContext.title}</span>
+            <span className="flex-shrink-0 opacity-70">· {hostOf(pageContext.url)}</span>
+          </div>
+        )
       )}
 
       {/* Input area */}
@@ -389,16 +428,6 @@ export function ChatInterface({
             <DocumentIcon className="w-[18px] h-[18px]" />
           </IconButton>
 
-          {settings.agentEnabled && (
-            <IconButton
-              onClick={() => setAgentMode(!agentMode)}
-              title={agentMode ? 'Agent mode on — I can act on the page' : 'Agent mode off — I only read the page'}
-              active={agentMode}
-            >
-              <HandIcon className="w-[18px] h-[18px]" />
-            </IconButton>
-          )}
-
           <TemplatePicker onSelect={(prompt) => { setInput(prompt); inputRef.current?.focus(); }} />
 
           <textarea
@@ -406,7 +435,9 @@ export function ChatInterface({
             value={input}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
-            placeholder={agentMode ? 'Tell me what to do on this page…' : 'Ask about this page…'}
+            placeholder={
+              settings.agentEnabled ? 'Ask about this page, or tell me what to do on it…' : 'Ask about this page…'
+            }
             rows={1}
             className="flex-1 min-w-0 resize-none bg-transparent px-1.5 py-2 text-sm leading-relaxed focus:outline-none text-[var(--text-primary)] placeholder-[var(--text-muted)]"
             style={{ maxHeight: '140px' }}

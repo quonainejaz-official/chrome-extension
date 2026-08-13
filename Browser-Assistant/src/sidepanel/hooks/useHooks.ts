@@ -1,5 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { Conversation, Message, Settings, PageContext, FromBackgroundMessage } from '../../shared/types';
+import type {
+  Conversation,
+  Message,
+  Settings,
+  PageContext,
+  FromBackgroundMessage,
+  AgentStatusEvent,
+} from '../../shared/types';
+
+export type AgentStatus = AgentStatusEvent['payload'];
 import type { AgentStep } from '../../shared/actions';
 import type { ConfirmRequest } from '../components/ConfirmCard';
 import { sendMessageToBackground } from '../lib/messaging';
@@ -30,6 +39,11 @@ export function useSettings() {
 export function useConversations() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  // Bumped on every "New chat". Without it, starting a new chat while activeId
+  // is already null (which is the case whenever the previous run failed before
+  // a conversation was persisted) changes no state, so React re-renders
+  // nothing and the old messages stay on screen.
+  const [sessionKey, setSessionKey] = useState(0);
 
   const loadConversations = useCallback(async () => {
     const response = await sendMessageToBackground({ type: 'GET_CONVERSATIONS' });
@@ -56,6 +70,7 @@ export function useConversations() {
 
   const newConversation = useCallback(() => {
     setActiveId(null);
+    setSessionKey((n) => n + 1);
   }, []);
 
   // Listen for updates from background
@@ -75,6 +90,7 @@ export function useConversations() {
     conversations,
     activeConversation,
     activeId,
+    sessionKey,
     selectConversation,
     deleteConversation,
     newConversation,
@@ -84,6 +100,7 @@ export function useConversations() {
 
 export function useChat(
   conversationId: string | null,
+  sessionKey: number,
   onConversationCreated?: (id: string) => void
 ) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -92,26 +109,53 @@ export function useChat(
   const [liveSteps, setLiveSteps] = useState<AgentStep[]>([]);
   const [confirmation, setConfirmation] = useState<ConfirmRequest | null>(null);
   const [isAgentRunning, setIsAgentRunning] = useState(false);
+  const [status, setStatus] = useState<AgentStatus | null>(null);
   const streamingRef = useRef(false);
 
-  // Load messages when conversation changes
+  // Load messages when the conversation changes — or when the user starts a
+  // new chat, which may not change the id at all.
   useEffect(() => {
+    setError(null);
+    setLiveSteps([]);
+    setConfirmation(null);
+    setIsLoading(false);
+    setIsAgentRunning(false);
+
+    // Abandoning a chat must also stop the agent driving the page. Without
+    // this the old run keeps clicking away in the background and streams its
+    // steps into the new, unrelated conversation.
+    if (streamingRef.current) {
+      void sendMessageToBackground({ type: 'CANCEL_AGENT' }).catch(() => {
+        /* worker asleep — nothing to cancel */
+      });
+    }
+    // A run that died without settling would otherwise leave this stuck true
+    // and silently swallow every later send.
+    streamingRef.current = false;
+
     if (!conversationId) {
       setMessages([]);
       return;
     }
+
+    let cancelled = false;
     sendMessageToBackground({ type: 'GET_CONVERSATION', payload: { id: conversationId } }).then((response) => {
-      if (response.type === 'CONVERSATION') {
-        setMessages(response.payload.messages);
-      }
+      if (cancelled) return;
+      if (response.type === 'CONVERSATION') setMessages(response.payload.messages);
     });
-  }, [conversationId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId, sessionKey]);
 
   // Live agent events: step updates and confirmation prompts.
   useEffect(() => {
     const handler = (message: FromBackgroundMessage) => {
       if (message.type === 'AGENT_STEP') {
         const incoming = message.payload.step;
+        // A chat message can turn into an agent run without the panel asking
+        // for one, so the arrival of steps is what marks a run as live.
+        setIsAgentRunning(true);
         setLiveSteps((prev) => {
           const idx = prev.findIndex((s) => s.id === incoming.id);
           if (idx < 0) return [...prev, incoming];
@@ -119,6 +163,9 @@ export function useChat(
           next[idx] = incoming;
           return next;
         });
+      } else if (message.type === 'AGENT_STATUS') {
+        setIsAgentRunning(true);
+        setStatus(message.payload);
       } else if (message.type === 'AGENT_CONFIRM_REQUEST') {
         setConfirmation(message.payload);
       }
@@ -146,13 +193,13 @@ export function useChat(
   }, []);
 
   const sendMessage = useCallback(
-    async (content: string, includePageContext: boolean = true, agentMode: boolean = false) => {
+    async (content: string, includePageContext: boolean = true) => {
       if (!content.trim() || streamingRef.current) return;
 
       streamingRef.current = true;
       setIsLoading(true);
-      setIsAgentRunning(agentMode);
       setLiveSteps([]);
+      setStatus(null);
       setConfirmation(null);
       setError(null);
 
@@ -175,15 +222,12 @@ export function useChat(
       };
 
       try {
-        const response = agentMode
-          ? await sendMessageToBackground({
-              type: 'RUN_AGENT',
-              payload: { goal: content.trim(), conversationId: conversationId ?? undefined },
-            })
-          : await sendMessageToBackground({
-              type: 'SEND_MESSAGE',
-              payload: { content: content.trim(), conversationId: conversationId ?? undefined, includePageContext },
-            });
+        // One entry point. The model decides from the message itself whether
+        // to answer or to start acting on the page, so there is no mode to set.
+        const response = await sendMessageToBackground({
+          type: 'SEND_MESSAGE',
+          payload: { content: content.trim(), conversationId: conversationId ?? undefined, includePageContext },
+        });
 
         if (response.type === 'AGENT_FINISHED') {
           appendAssistant({
@@ -211,6 +255,7 @@ export function useChat(
       } finally {
         setIsLoading(false);
         setIsAgentRunning(false);
+        setStatus(null);
         setConfirmation(null);
         streamingRef.current = false;
       }
@@ -228,27 +273,98 @@ export function useChat(
     answerConfirmation,
     cancelAgent,
     isAgentRunning,
+    status,
   };
 }
 
 export function usePageContext() {
   const [context, setContext] = useState<PageContext | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inFlight = useRef(false);
+  const missedRefresh = useRef(false);
 
   const refresh = useCallback(async () => {
-    const response = await sendMessageToBackground({ type: 'GET_PAGE_CONTEXT' });
-    if (response.type === 'PAGE_CONTEXT') {
-      setContext(response.payload);
+    // Tab events arrive in bursts (activated, then updated, then complete), so
+    // only one read runs at a time. Anything that arrives mid-read is recorded
+    // and replayed once it finishes — dropping it outright would strand the
+    // panel on the old page, which is the very bug this hook exists to fix.
+    if (inFlight.current) {
+      missedRefresh.current = true;
+      return;
+    }
+    inFlight.current = true;
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await sendMessageToBackground({ type: 'GET_PAGE_CONTEXT' });
+      if (response.type === 'PAGE_CONTEXT') {
+        setContext(response.payload);
+      } else if (response.type === 'ERROR') {
+        // Previously swallowed, which is why the refresh button looked dead on
+        // pages that cannot be read.
+        setContext(null);
+        setError(response.payload.message);
+      }
+    } catch (err) {
+      setContext(null);
+      setError(err instanceof Error ? err.message : 'Could not read the current page');
+    } finally {
+      inFlight.current = false;
+      setLoading(false);
+      if (missedRefresh.current) {
+        missedRefresh.current = false;
+        void refreshRef.current?.();
+      }
     }
   }, []);
 
+  // Lets the replay above call the latest refresh without making `refresh`
+  // depend on itself.
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
+
   // Capture the current page as soon as the panel opens, so the context
-  // indicator and "page content included" toggle reflect reality immediately
-  // instead of only after the user manually hits refresh.
+  // indicator reflects reality immediately rather than only after a manual
+  // refresh.
   useEffect(() => {
     refresh();
   }, [refresh]);
 
-  return { context, refresh };
+  // Follow the user. The side panel persists across tab switches and
+  // navigations, so without these listeners it keeps reporting whichever page
+  // happened to be open when it was first opened.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const debounced = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => refresh(), 250);
+    };
+
+    const onActivated = () => debounced();
+    const onUpdated = (_tabId: number, change: chrome.tabs.TabChangeInfo, tab: chrome.tabs.Tab) => {
+      // Only care about the tab the user is looking at, and only once its
+      // document is actually there to read.
+      if (!tab.active) return;
+      if (change.status === 'complete' || change.url) debounced();
+    };
+    const onFocusChanged = (windowId: number) => {
+      if (windowId !== chrome.windows.WINDOW_ID_NONE) debounced();
+    };
+
+    chrome.tabs.onActivated.addListener(onActivated);
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.windows?.onFocusChanged.addListener(onFocusChanged);
+
+    return () => {
+      clearTimeout(timer);
+      chrome.tabs.onActivated.removeListener(onActivated);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.windows?.onFocusChanged.removeListener(onFocusChanged);
+    };
+  }, [refresh]);
+
+  return { context, refresh, loading, error };
 }
 
 type ThemePref = 'light' | 'dark' | 'system';

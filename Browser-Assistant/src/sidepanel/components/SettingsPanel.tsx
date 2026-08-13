@@ -1,6 +1,11 @@
 import { useMemo, useState } from 'react';
 import type { Settings, CustomModel, ConfirmMode } from '../../shared/types';
-import { BUILTIN_MODELS, DEFAULT_MODEL_ID, MAX_AGENT_STEPS_LIMIT } from '../../shared/constants';
+import {
+  BUILTIN_MODELS,
+  DEFAULT_MODEL_ID,
+  MAX_AGENT_STEPS_LIMIT,
+  MAX_AGENT_ACTIONS_LIMIT,
+} from '../../shared/constants';
 import { BackIcon, PlusIcon, TrashIcon, CheckIcon } from './Icons';
 import { ProfileSection } from './ProfileSection';
 
@@ -250,22 +255,15 @@ export function SettingsPanel({ settings, onSave, onBack }: Props) {
 
         {/* Agent mode */}
         <Section
-          title="Agent mode"
-          desc="Lets the assistant act on the page — click, type, choose from dropdowns, tick boxes and scroll — instead of only reading it."
+          title="Acting on pages"
+          desc="The assistant works out from your message whether you want an answer or want something done — there is no mode to switch."
         >
-          <div className="space-y-3">
-            <Toggle
-              label="Allow actions on pages"
-              checked={settings.agentEnabled}
-              onChange={(v) => onSave({ agentEnabled: v })}
-            />
-            <Toggle
-              label="Start new chats in agent mode"
-              desc="Otherwise use the hand button in the composer to switch it on per chat."
-              checked={settings.agentByDefault}
-              onChange={(v) => onSave({ agentByDefault: v })}
-            />
-          </div>
+          <Toggle
+            label="Let the assistant act on pages"
+            desc="Off = read-only. It will still answer questions about the page, but never click, type or submit."
+            checked={settings.agentEnabled}
+            onChange={(v) => onSave({ agentEnabled: v })}
+          />
         </Section>
 
         {/* Confirmation policy */}
@@ -283,22 +281,42 @@ export function SettingsPanel({ settings, onSave, onBack }: Props) {
             <option value="never">Never ask — just do it</option>
           </select>
 
-          <div className="pt-2">
-            <label className="block text-xs font-medium mb-1 text-[var(--text-secondary)]">
-              Maximum actions per run: {settings.maxAgentSteps}
-            </label>
-            <input
-              type="range"
-              min={3}
-              max={MAX_AGENT_STEPS_LIMIT}
-              step={1}
-              value={settings.maxAgentSteps}
-              onChange={(e) => onSave({ maxAgentSteps: Number(e.target.value) })}
-              className="w-full accent-[var(--accent)]"
-            />
-            <p className="text-[11px] text-[var(--text-muted)] mt-1">
-              A safety stop. Long forms need more; a lower number keeps a confused model on a short leash.
-            </p>
+          <div className="pt-2 space-y-3">
+            <div>
+              <label className="block text-xs font-medium mb-1 text-[var(--text-secondary)]">
+                Maximum actions per run: {settings.maxAgentActions}
+              </label>
+              <input
+                type="range"
+                min={5}
+                max={MAX_AGENT_ACTIONS_LIMIT}
+                step={5}
+                value={settings.maxAgentActions}
+                onChange={(e) => onSave({ maxAgentActions: Number(e.target.value) })}
+                className="w-full accent-[var(--accent)]"
+              />
+              <p className="text-[11px] text-[var(--text-muted)] mt-1">
+                A safety stop. A long checkout form is easily 30 fields.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium mb-1 text-[var(--text-secondary)]">
+                Maximum planning turns per run: {settings.maxAgentSteps}
+              </label>
+              <input
+                type="range"
+                min={3}
+                max={MAX_AGENT_STEPS_LIMIT}
+                step={1}
+                value={settings.maxAgentSteps}
+                onChange={(e) => onSave({ maxAgentSteps: Number(e.target.value) })}
+                className="w-full accent-[var(--accent)]"
+              />
+              <p className="text-[11px] text-[var(--text-muted)] mt-1">
+                How many times it may stop and re-think. One turn can fill several fields at once.
+              </p>
+            </div>
           </div>
         </Section>
 

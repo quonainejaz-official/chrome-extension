@@ -4,7 +4,7 @@ An AI-powered Chrome side panel that **reads the page or PDF you're currently vi
 
 ## Features
 
-- **Agent mode** — becomes your hands on the page: click buttons and links, type into fields, select dropdown options, tick checkboxes, scroll, navigate. It asks before it submits anything.
+- **Acts on the page, not just reads it** — becomes your hands: clicks buttons and links, types into fields, selects dropdown options, ticks checkboxes, scrolls, navigates. It asks before it submits anything, and it works out from your message whether you wanted an answer or an action — no mode to switch.
 - **Reads your current page automatically** — the extension extracts the live content of the tab you're on (no copy-paste needed)
 - **PDF support** — reads PDFs opened in the browser by fetching and parsing them with pdf.js
 - **Summarize / analyze / Q&A** on articles, docs, and PDFs
@@ -60,9 +60,9 @@ Settings → **Custom models → Add custom model**. Provide:
 3. Make sure page context is enabled (the document icon in the input bar)
 4. Ask a question or use a quick action / template
 
-### Agent mode — letting it act, not just read
+### Letting it act, not just read
 
-Click the **hand icon** in the input bar to switch the chat from *reading* the page to *operating* it. Then just say what you want:
+There is **no mode to switch**. Say what you want and the assistant works out from your message whether you're asking a question or asking for something to be done — in any language, including Roman Urdu and Hindi. "Is page pe kya likha hai?" gets an answer; "ye form bhar do" gets a run. Just say what you want:
 
 - "Fill this form with my details" — reads the form, matches each field to your saved profile, fills them one by one, and stops so you can review
 - "Fill it and submit" — same, but it goes ahead and submits, because you asked
@@ -70,7 +70,9 @@ Click the **hand icon** in the input bar to switch the chat from *reading* the p
 - "Find the pricing section and click the Enterprise plan"
 - "What can I actually do on this page?" — scrolls through and maps out the controls
 
-**How a run works.** Each step is: look at the page → decide one action → do it → look again. You see every action stream into the panel as it happens, with a ✓, ✗ or shield next to it. The **Stop** button ends the run immediately.
+**How a run works.** Each turn is: look at the page → plan a **batch** of actions → run them → look again. A whole form is filled in one round-trip rather than one per field. The run panel shows the goal, a live timeline with a distinct icon per action, elapsed time, what it's doing right now ("Reading the page", "Deciding the next move", "Rate limited — waiting 8s"), and a **Stop** button that ends it immediately.
+
+A batch stops at the first action the page reacts to — a click, a submit, a navigation — because every element reference after that point is stale. Field edits, dropdown choices and checkbox ticks batch freely.
 
 **What it will not do.**
 
@@ -107,8 +109,8 @@ Click the sparkle icon in the input bar for:
 - **Model** — free / metered OpenCode Zen models and your custom providers
 - **OpenCode Zen API key** — overrides the built-in default key (optional)
 - **Custom models** — add/remove OpenAI-compatible providers
-- **Agent mode** — master switch, and whether new chats start in agent mode
-- **Ask before submitting** — confirmation policy, plus the maximum actions per run
+- **Acting on pages** — master switch; off makes the assistant read-only
+- **Ask before submitting** — confirmation policy, plus the action and planning-turn budgets per run
 - **Your details** — the autofill profile the agent may type into forms
 - **Theme** — Light, Dark, or System
 - **Default translation language**
@@ -145,13 +147,18 @@ The extension does **not** rely on you pasting content. When you send a message 
 
 ## How agent mode works
 
+Every message goes to the chat path first, with the full page text and the rich answering prompt. That call either answers normally — so summaries, translations and Q&A keep exactly the quality they had — or returns a one-line handoff sentinel, at which point the background starts an agent run with the same goal. One model call decides; nothing is spent on classification.
+
 Each turn of a run:
 
-1. A snapshot function is injected into the tab (main frame plus same-origin iframes). It walks the DOM — including open shadow roots — and tags every visible, actionable element with a `data-aipa-ref` handle: buttons, links, inputs, selects, checkboxes, ARIA widgets, `contenteditable` regions.
-2. That becomes a compact list the model can address by ref — role, accessible name, current value, dropdown options, checked state, required/disabled, which form it belongs to, whether it is on screen. Refs are renumbered every turn, so the model can only ever act on what is on the page *right now*.
-3. The model replies with exactly one JSON action.
-4. The action is executed in the frame that owns the ref, with real event sequences (pointer → mouse → native click) and prototype value setters, so React, Vue and friends register the change rather than silently ignoring it.
-5. The result — success, failure, validation error, "that dropdown is custom, here's what opened" — is fed back, and the loop repeats until the model calls `done`, asks you a question, you stop it, or it hits the step cap.
+1. A snapshot function is injected into the tab (main frame plus child frames). It walks the DOM — including open shadow roots — and tags every visible, actionable element with a `data-aipa-ref` handle: buttons, links, inputs, selects, checkboxes, ARIA widgets, `contenteditable` regions.
+2. That becomes a compact list the model can address by ref — role, accessible name, current value, dropdown options, checked state, required/disabled, which form it belongs to, whether it is on screen. Refs are renumbered every turn, so the model can only ever act on what is on the page *right now*. The page-text block is only re-sent when the page actually changed, which is most of what a per-turn prompt used to cost.
+3. The model replies with a JSON list of actions.
+4. The batch is pre-flighted: cut at the first page-changing action, duplicates dropped, fills aimed at locked fields removed, remaining action budget applied. This guarantees a consequential action can only ever be last, so the confirmation gate cannot be skipped by burying a submit mid-batch.
+5. Each action is executed in the frame that owns its ref, with real event sequences (pointer → mouse → native click) and prototype value setters, so React, Vue and friends register the change rather than silently ignoring it.
+6. The batch aborts the moment anything fails or the page moves; the remaining actions are marked skipped. The indexed results are fed back and the loop repeats until the model calls `done`, asks you a question, you stop it, or it hits the action or turn budget.
+
+A rate limit pauses and retries the turn rather than killing the run — a half-filled form is not thrown away because a free-tier limit fired.
 
 Page text and element labels are passed as clearly delimited untrusted data, with the user's goal restated afterwards, so a page that tries to issue instructions to the agent is treated as content rather than a command.
 

@@ -1,4 +1,4 @@
-import { sendChatMessage } from './api-client';
+import { sendChatMessage, detectHandoff } from './api-client';
 import {
   getSettings,
   saveSettings,
@@ -44,6 +44,82 @@ function broadcast(message: FromBackgroundMessage): void {
   chrome.runtime.sendMessage(message).catch(() => {
     /* no listener */
   });
+}
+
+interface AgentRunRequest {
+  goal: string;
+  conversation: Conversation;
+  priorMessages: Message[];
+  settings: Settings;
+  model: ResolvedModel;
+  tabId: number;
+}
+
+/**
+ * Drives one agent run and persists its result. Shared by the explicit
+ * RUN_AGENT path and by SEND_MESSAGE, which reaches it when the model decides
+ * the user asked for something to be done rather than explained.
+ */
+async function startAgentRun(request: AgentRunRequest): Promise<FromBackgroundMessage> {
+  const { goal, conversation, priorMessages, settings, model, tabId } = request;
+  const runId = generateId();
+  activeRun = { id: runId, cancelled: false };
+
+  let result: { summary: string; steps: AgentStep[]; incomplete: boolean };
+  try {
+    result = await runAgent({
+      runId,
+      tabId,
+      goal,
+      history: priorMessages,
+      settings,
+      model,
+      emitStep: (step) => broadcast({ type: 'AGENT_STEP', payload: { runId, step } }),
+      emitStatus: (kind, text) => broadcast({ type: 'AGENT_STATUS', payload: { runId, kind, text } }),
+      requestConfirmation: (confirmation) => askForConfirmation(runId, confirmation),
+      isCancelled: () => activeRun?.cancelled ?? true,
+    });
+  } catch (err) {
+    result = {
+      summary: 'The run stopped unexpectedly: ' + (err instanceof Error ? err.message : String(err)),
+      steps: [],
+      incomplete: true,
+    };
+  } finally {
+    activeRun = null;
+    for (const resolve of pendingConfirmations.values()) resolve(false);
+    pendingConfirmations.clear();
+  }
+
+  const assistantMessage: Message = {
+    id: generateId(),
+    role: 'assistant',
+    content: result.summary,
+    timestamp: Date.now(),
+    metadata: { agent: true, steps: result.steps, model: model.model },
+  };
+  conversation.messages.push(assistantMessage);
+  if (conversation.messages.filter((m) => m.role === 'user').length === 1) {
+    conversation.title = generateTitle(goal);
+  }
+  conversation.updatedAt = Date.now();
+  await saveConversation(conversation);
+
+  const finished: FromBackgroundMessage = {
+    type: 'AGENT_FINISHED',
+    payload: {
+      runId,
+      conversationId: conversation.id,
+      messageId: assistantMessage.id,
+      content: result.summary,
+      steps: result.steps,
+      incomplete: result.incomplete,
+    },
+  };
+  // Also broadcast so the conversation list refreshes even though the caller
+  // gets this same object as its response.
+  broadcast(finished);
+  return finished;
 }
 
 function askForConfirmation(runId: string, request: ConfirmationRequest): Promise<boolean> {
@@ -213,8 +289,16 @@ async function handleSidePanelMessage(
         };
       }
 
+      // The assistant may act on the page rather than answer, but only where
+      // acting is actually possible: enabled in Settings, on a real http(s)
+      // page, and with no other run already in flight.
+      const activeTab = await getActiveTab();
+      const canAct =
+        settings.agentEnabled && !activeRun && !!activeTab?.id && /^https?:/i.test(activeTab.url ?? '');
+
       // Stream response
       let fullContent = '';
+      let chatFailed = false;
       try {
         await sendChatMessage(
           modelConfig,
@@ -230,11 +314,34 @@ async function handleSidePanelMessage(
             },
             onError: (err) => {
               fullContent = `Error: ${err.message}`;
+              chatFailed = true;
             },
-          }
+          },
+          canAct
         );
       } catch (err) {
         fullContent = `Error: ${err instanceof Error ? err.message : 'Unknown error'}`;
+        chatFailed = true;
+      }
+
+      // Did the model decide this was a job rather than a question?
+      if (!chatFailed && canAct && activeTab?.id) {
+        const handoff = detectHandoff(fullContent);
+        if (handoff) {
+          // Drop the placeholder — the sentinel is plumbing, not an answer.
+          conversation.messages.pop();
+          conversation.updatedAt = Date.now();
+          await saveConversation(conversation);
+
+          return startAgentRun({
+            goal: handoff.goal || content,
+            conversation,
+            priorMessages: conversation.messages.slice(0, -1),
+            settings,
+            model: modelConfig,
+            tabId: activeTab.id,
+          });
+        }
       }
 
       // Update assistant message
@@ -322,63 +429,7 @@ async function handleSidePanelMessage(
       conversation.updatedAt = Date.now();
       await saveConversation(conversation);
 
-      const runId = generateId();
-      activeRun = { id: runId, cancelled: false };
-
-      let result: { summary: string; steps: AgentStep[]; incomplete: boolean };
-      try {
-        result = await runAgent({
-          runId,
-          tabId: tab.id,
-          goal,
-          history: priorMessages,
-          settings,
-          model: modelConfig,
-          emitStep: (step) => broadcast({ type: 'AGENT_STEP', payload: { runId, step } }),
-          requestConfirmation: (request) => askForConfirmation(runId, request),
-          isCancelled: () => activeRun?.cancelled ?? true,
-        });
-      } catch (err) {
-        result = {
-          summary: 'The run stopped unexpectedly: ' + (err instanceof Error ? err.message : String(err)),
-          steps: [],
-          incomplete: true,
-        };
-      } finally {
-        activeRun = null;
-        for (const resolve of pendingConfirmations.values()) resolve(false);
-        pendingConfirmations.clear();
-      }
-
-      const assistantMessage: Message = {
-        id: generateId(),
-        role: 'assistant',
-        content: result.summary,
-        timestamp: Date.now(),
-        metadata: { agent: true, steps: result.steps, model: modelConfig.model },
-      };
-      conversation.messages.push(assistantMessage);
-      if (conversation.messages.filter((m) => m.role === 'user').length === 1) {
-        conversation.title = generateTitle(goal);
-      }
-      conversation.updatedAt = Date.now();
-      await saveConversation(conversation);
-
-      const finished: FromBackgroundMessage = {
-        type: 'AGENT_FINISHED',
-        payload: {
-          runId,
-          conversationId: conversation.id,
-          messageId: assistantMessage.id,
-          content: result.summary,
-          steps: result.steps,
-          incomplete: result.incomplete,
-        },
-      };
-      // Also broadcast so the conversation list refreshes even though the
-      // caller gets this same object as its response.
-      broadcast(finished);
-      return finished;
+      return startAgentRun({ goal, conversation, priorMessages, settings, model: modelConfig, tabId: tab.id });
     }
 
     case 'AGENT_CONFIRM_DECISION': {

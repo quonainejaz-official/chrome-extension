@@ -31,21 +31,25 @@ export function sleep(ms: number): Promise<void> {
  * every ref into one flat namespace so the model never has to think about
  * frames.
  */
-export async function snapshotTab(tabId: number): Promise<TabSnapshot> {
+export async function snapshotTab(
+  tabId: number,
+  opts: { wantText?: boolean } = {}
+): Promise<TabSnapshot> {
+  const wantText = opts.wantText !== false;
   let results: chrome.scripting.InjectionResult<Awaited<ReturnType<typeof snapshotInPage>>>[] = [];
 
   try {
     results = (await chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
       func: snapshotInPage,
-      args: [MAX_ELEMENTS, MAX_SNAPSHOT_TEXT],
+      args: [MAX_ELEMENTS, MAX_SNAPSHOT_TEXT, wantText],
     })) as typeof results;
   } catch {
     // allFrames can fail outright on some pages; fall back to the main frame.
     results = (await chrome.scripting.executeScript({
       target: { tabId, frameIds: [0] },
       func: snapshotInPage,
-      args: [MAX_ELEMENTS, MAX_SNAPSHOT_TEXT],
+      args: [MAX_ELEMENTS, MAX_SNAPSHOT_TEXT, wantText],
     })) as typeof results;
   }
 

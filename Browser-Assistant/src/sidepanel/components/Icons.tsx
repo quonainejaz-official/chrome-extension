@@ -191,6 +191,75 @@ export function XCircleIcon(props: IconProps) {
   );
 }
 
+// ── Per-action glyphs for the run timeline ──────────────────────
+
+export function CursorIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M5.5 3.5l13 6.2-5.6 1.9-1.9 5.6z" />
+    </svg>
+  );
+}
+
+export function KeyboardIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <rect x="2.5" y="6.5" width="19" height="11" rx="2" />
+      <path d="M6 10h.01M9.5 10h.01M13 10h.01M16.5 10h.01M8 14h8" />
+    </svg>
+  );
+}
+
+export function ListIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M8 7h12M8 12h12M8 17h12M4 7h.01M4 12h.01M4 17h.01" />
+    </svg>
+  );
+}
+
+export function CheckboxIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <rect x="4" y="4" width="16" height="16" rx="3" />
+      <path d="M8.5 12.2l2.4 2.4 4.6-4.9" />
+    </svg>
+  );
+}
+
+export function ScrollIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M12 4v16M12 20l-4-4M12 20l4-4" />
+    </svg>
+  );
+}
+
+export function NavigateIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M4 12h14M18 12l-5-5M18 12l-5 5" />
+    </svg>
+  );
+}
+
+export function SubmitIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M3.5 11.5L20.5 4l-7 16.5-2.6-6.9z" />
+    </svg>
+  );
+}
+
+export function ClockIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7.5V12l3 1.8" />
+    </svg>
+  );
+}
+
 export function GlobeIcon(props: IconProps) {
   return (
     <svg {...base} {...props}>

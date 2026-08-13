@@ -126,6 +126,20 @@ export interface AgentStepEvent {
   };
 }
 
+/**
+ * What the agent is doing between actions. Without this the panel shows
+ * nothing at all during the seconds spent reading the page and waiting on the
+ * model, which is most of a run.
+ */
+export interface AgentStatusEvent {
+  type: 'AGENT_STATUS';
+  payload: {
+    runId: string;
+    kind: 'reading' | 'thinking' | 'waiting' | 'acting';
+    text: string;
+  };
+}
+
 /** Broadcast when a consequential action needs the user's go-ahead. */
 export interface AgentConfirmRequestEvent {
   type: 'AGENT_CONFIRM_REQUEST';
@@ -208,6 +222,7 @@ export type FromBackgroundMessage =
   | ErrorResponse
   | PanelToggledResponse
   | AgentStepEvent
+  | AgentStatusEvent
   | AgentConfirmRequestEvent
   | AgentFinishedResponse;
 
@@ -359,12 +374,15 @@ export interface Settings {
   fontSize: 'small' | 'medium' | 'large';
 
   // ── Agent mode ────────────────────────────────────────────────
-  /** Master switch for the "take actions on the page" capability. */
+  /**
+   * Master switch. Off means read-only: the assistant answers questions about
+   * the page but never clicks, types or submits.
+   */
   agentEnabled: boolean;
-  /** Whether the composer starts in agent mode. */
-  agentByDefault: boolean;
   confirmMode: ConfirmMode;
-  /** Hard cap on actions per run, so a confused model cannot loop forever. */
+  /** Model round-trips per run — the planning budget. */
   maxAgentSteps: number;
+  /** Total actions per run, so one long form isn't cut off mid-way. */
+  maxAgentActions: number;
   profile: UserProfile;
 }
