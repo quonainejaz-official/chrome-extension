@@ -283,8 +283,34 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
 
       if (result.navigated) needsPageText = true;
 
-      // Anything that failed or moved the page invalidates the rest of the plan.
-      if (!result.ok || result.navigated || result.endBatch) {
+      // Only a change to the page invalidates the refs the rest of the plan is
+      // aimed at. A field that refused its value — a bad date format, a failed
+      // pattern — leaves everything else exactly where it was, so carrying on
+      // with the remaining fields saves a whole round-trip.
+      const movedPage = !!result.navigated || !!result.endBatch;
+      const fatalForBatch = movedPage || (!result.ok && batchClass(action, element) === 'terminal');
+
+      if (!result.ok) {
+        const signature = JSON.stringify(action);
+        repeatedFailure =
+          signature === repeatedFailure.signature
+            ? { signature, count: repeatedFailure.count + 1 }
+            : { signature, count: 1 };
+      } else {
+        repeatedFailure = { signature: '', count: 0 };
+      }
+
+      if (repeatedFailure.count >= MAX_REPEATED_FAILURES) {
+        return {
+          summary:
+            `I tried "${describeAction(action, element)}" ${repeatedFailure.count} times and it kept failing: ` +
+            `${result.message} ${describeProgress(steps)}`,
+          steps,
+          incomplete: true,
+        };
+      }
+
+      if (fatalForBatch) {
         const rest = plan.actions.slice(i + 1);
         if (rest.length > 0) {
           markSkipped(rest, runId, turnIndex, steps, opts);
@@ -292,30 +318,8 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
             `${i + 2}–${plan.actions.length}. SKIPPED — the page changed, so those refs are no longer valid.`
           );
         }
-
-        if (!result.ok) {
-          const signature = JSON.stringify(action);
-          if (signature === repeatedFailure.signature) {
-            repeatedFailure.count++;
-            if (repeatedFailure.count >= MAX_REPEATED_FAILURES) {
-              return {
-                summary:
-                  `I tried "${describeAction(action, element)}" ${repeatedFailure.count} times and it kept failing: ` +
-                  `${result.message} ${describeProgress(steps)}`,
-                steps,
-                incomplete: true,
-              };
-            }
-          } else {
-            repeatedFailure = { signature, count: 1 };
-          }
-        } else {
-          repeatedFailure = { signature: '', count: 0 };
-        }
         break;
       }
-
-      repeatedFailure = { signature: '', count: 0 };
     }
 
     if (stopReason === 'cancelled') return cancelled(steps);
@@ -391,7 +395,13 @@ async function auditForm(tabId: number): Promise<FormAudit | null> {
 
   for (const el of fillable) {
     const value = (el.value ?? '').trim();
-    const label = el.name || el.ref;
+    const label = [el.section, el.name || el.ref].filter(Boolean).join(' › ');
+
+    // The site's own verdict beats any heuristic of ours.
+    if (el.error) {
+      problems.push(`[${el.ref}] "${label}" is rejected by the page: ${el.error}`);
+      continue;
+    }
 
     if (el.requiredness === 'required' && !value) {
       problems.push(`[${el.ref}] "${label}" is REQUIRED but still empty.`);
@@ -418,7 +428,7 @@ async function auditForm(tabId: number): Promise<FormAudit | null> {
     problems,
     fields: fillable.map((el) => ({
       ref: el.ref,
-      name: el.name || el.ref,
+      name: [el.section, el.name || el.ref].filter(Boolean).join(' › '),
       value: (el.value ?? '').trim(),
       requiredness: el.requiredness,
     })),
@@ -637,6 +647,9 @@ Set "userAuthorized" to true ONLY when the user's own message explicitly asked f
 2. STOP the list at the first click, submit, navigate, scroll, hover, key press, or Enter: that action must be the LAST item, because the page reacts to it and every ref after it is stale. A list with one item is always fine.
 3. Use only refs that appear in the CURRENT snapshot — refs are renumbered every turn.
 4. Match every value to its OWN label, never to position in the list. Fields marked REQUIRED must be filled. Fields marked OPTIONAL must be left empty unless the user specifically asked for them — putting a value in an optional field and then shifting everything else down one row is the single most common way this goes wrong. Before you send a batch, read your list back: does each value belong under that exact label? A ZIP belongs in ZIP, not State.
+4a. Elements are grouped under "--- Section ---" headings. Long forms repeat the same labels in different sections — an address for a registered agent and another for a member. Keep each section's data self-consistent and never carry one section's values into another.
+4b. If an element shows "⚠ PAGE SAYS", the site has rejected that value. Fix those first, take the page's wording literally (a "2-character state code" means "TX", not "Texas"), and never re-enter a value the page has already refused.
+4c. Respect any "accepts" hint: a date field wants YYYY-MM-DD, a number field wants digits, a max length is a hard limit.
 5. Where values come from, in order:
    a. Anything the user typed in this conversation — always use that first, exactly as given.
    b. Their saved details below.
@@ -748,8 +761,26 @@ function renderSnapshot(snapshot: PageSnapshot, goal: string): string {
   if (snapshot.elements.length === 0) {
     lines.push('(none found — the page may still be loading, or content sits in a cross-origin iframe)');
   }
+
+  // Grouped under their section heading. A long form repeats "Street", "City"
+  // and "Zip" per address block; ungrouped, those are indistinguishable.
+  let currentSection: string | undefined;
   for (const el of snapshot.elements) {
+    if (el.section !== currentSection) {
+      currentSection = el.section;
+      if (currentSection) lines.push('', `--- ${currentSection} ---`);
+    }
     lines.push(renderElement(el));
+  }
+
+  const invalid = snapshot.elements.filter((el) => el.error);
+  if (invalid.length > 0) {
+    lines.push('');
+    lines.push('=== THE PAGE IS REJECTING THESE ===');
+    for (const el of invalid) {
+      lines.push(`[${el.ref}] "${el.name}" — ${el.error}`);
+    }
+    lines.push('Fix these before doing anything else. The page rules win over your assumptions.');
   }
   if (snapshot.truncated) {
     lines.push('(list truncated — scroll or narrow the page to see more)');
@@ -803,9 +834,12 @@ function renderElement(el: SnapshotElement): string {
     const shown = el.options.slice(0, 25).join(' | ');
     bits.push('options: ' + shown + (el.options.length > 25 ? ' | …' : ''));
   }
+  if (el.format) bits.push('accepts ' + el.format);
   if (el.value) bits.push('value="' + el.value + '"');
   else if (el.role === 'textbox' || el.role === 'select') bits.push('(empty)');
   if (typeof el.checked === 'boolean') bits.push(el.checked ? 'CHECKED' : 'unchecked');
+  if (el.group) bits.push('group=' + el.group + (el.role === 'radio' ? ' (pick exactly one)' : ''));
+  if (el.error) bits.push('⚠ PAGE SAYS: ' + el.error);
   if (el.href) bits.push('→ ' + el.href);
   if (el.disabled) bits.push('DISABLED');
   if (el.readOnly) bits.push('read-only');

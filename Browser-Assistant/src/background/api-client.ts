@@ -45,7 +45,9 @@ Judge from the user's message which they want:
 {"${HANDOFF_MARKER}":"act","goal":"<what they want done, in one line, in English>"}
 - They want to KNOW something (summarize, translate, explain, compare, what does this say, is this safe) — answer normally in markdown and never mention any of this.
 
-Judge intent, not keywords: the user may write in any language, including Roman Urdu or Hindi ("form bhar do", "ye button daba do", "sirf batao ke ismein kya likha hai"). If they only want to be told something, answer — do not hand off. If it is genuinely ambiguous, answer normally and offer to do it.`;
+Judge intent, not keywords: the user may write in any language, including Roman Urdu or Hindi ("form bhar do", "ye button daba do", "sirf batao ke ismein kya likha hai"). If they only want to be told something, answer — do not hand off. If it is genuinely ambiguous, answer normally and offer to do it.
+
+CRITICAL: when they want something done, hand off IMMEDIATELY. Never reply asking what to fill in, what data to use, or for confirmation first. You do not need any of that — the action system reads the form itself, uses the user's saved details, and invents sensible placeholder values when there are none. Asking first just costs the user another round of typing. Hand off and let it work.`;
   }
 
   if (pageContext) {

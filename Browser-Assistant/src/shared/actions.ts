@@ -51,6 +51,21 @@ export interface SnapshotElement {
   /** Ref of the enclosing <form>, if any. */
   formRef?: string;
   /**
+   * Nearest heading or fieldset legend above the field. Long forms repeat the
+   * same labels per section — "Street" for both a registered agent and a
+   * member — and without this the model cannot tell those apart.
+   */
+  section?: string;
+  /** Validation message the page is currently showing for this field. */
+  error?: string;
+  /** Format the field will accept: date pattern, max length, min/max, regex. */
+  format?: string;
+  /**
+   * Shared `name` for radios and checkboxes. Without it, the options of one
+   * radio group are indistinguishable from unrelated controls beside them.
+   */
+  group?: string;
+  /**
    * Password, credit card, CVV, SSN and similar. The agent is never allowed to
    * type into these — the user must do it themselves.
    */

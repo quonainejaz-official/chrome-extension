@@ -246,6 +246,105 @@ export function snapshotInPage(
     return 'unknown';
   };
 
+  // Which part of the page a field belongs to. Long forms repeat labels per
+  // section, so "Street" alone is ambiguous the moment there are two addresses.
+  const sectionOf = (el: Element): string => {
+    const HEADINGS = 'h1,h2,h3,h4,h5,h6,legend,[role="heading"]';
+    let node: Element | null = el;
+
+    for (let depth = 0; node && depth < 8; depth++) {
+      let sibling: Element | null = node.previousElementSibling;
+      let scanned = 0;
+      while (sibling && scanned < 12) {
+        if (sibling.matches(HEADINGS)) {
+          const text = squash(sibling.textContent || '');
+          if (text) return clamp(text, 60);
+        }
+        const nested = sibling.querySelector(HEADINGS);
+        if (nested) {
+          const text = squash(nested.textContent || '');
+          if (text) return clamp(text, 60);
+        }
+        sibling = sibling.previousElementSibling;
+        scanned++;
+      }
+
+      const parent: Element | null = node.parentElement;
+      if (!parent) break;
+      const legend = parent.tagName.toLowerCase() === 'fieldset' ? parent.querySelector('legend') : null;
+      if (legend) {
+        const text = squash(legend.textContent || '');
+        if (text) return clamp(text, 60);
+      }
+      node = parent;
+    }
+    return '';
+  };
+
+  // What the page is currently complaining about for this field. Feeding these
+  // back is what lets the agent correct itself against the site's own rules
+  // instead of guessing.
+  const errorFor = (el: Element): string => {
+    const describedBy = el.getAttribute('aria-describedby');
+    if (describedBy) {
+      for (const id of describedBy.split(/\s+/)) {
+        const node = document.getElementById(id);
+        if (!node) continue;
+        const text = squash(node.textContent || '');
+        if (text && text.length < 200) return clamp(text, 160);
+      }
+    }
+
+    if (el.getAttribute('aria-invalid') !== 'true' && !(el as HTMLInputElement).validationMessage) {
+      // Still worth a look: many sites show errors without any ARIA at all.
+      const container = el.parentElement;
+      if (container) {
+        const candidate = container.querySelector('[role="alert"],.error,.invalid,.field-error,.help-block');
+        if (candidate) {
+          const text = squash(candidate.textContent || '');
+          if (text && text.length < 200) return clamp(text, 160);
+        }
+      }
+      return '';
+    }
+
+    const native = (el as HTMLInputElement).validationMessage;
+    if (native) return clamp(squash(native), 160);
+
+    const alert = el.parentElement?.querySelector('[role="alert"],.error,.invalid,.field-error');
+    if (alert) {
+      const text = squash(alert.textContent || '');
+      if (text) return clamp(text, 160);
+    }
+    return 'invalid';
+  };
+
+  // Constraints the model would otherwise discover only by failing.
+  const formatOf = (el: Element): string => {
+    const input = el as HTMLInputElement;
+    const type = (input.type || '').toLowerCase();
+    const parts: string[] = [];
+
+    if (type === 'date') parts.push('YYYY-MM-DD');
+    else if (type === 'month') parts.push('YYYY-MM');
+    else if (type === 'time') parts.push('HH:MM (24h)');
+    else if (type === 'datetime-local') parts.push('YYYY-MM-DDTHH:MM');
+    else if (type === 'number' || type === 'range') parts.push('a number');
+    else if (type === 'email') parts.push('an email address');
+    else if (type === 'url') parts.push('a URL');
+    else if (type === 'tel') parts.push('a phone number');
+
+    const pattern = el.getAttribute('pattern');
+    if (pattern) parts.push('pattern ' + clamp(pattern, 40));
+    const maxLength = el.getAttribute('maxlength');
+    if (maxLength && Number(maxLength) > 0 && Number(maxLength) < 500) parts.push('max ' + maxLength + ' chars');
+    const min = el.getAttribute('min');
+    const max = el.getAttribute('max');
+    if (min || max) parts.push('range ' + (min ?? '?') + '–' + (max ?? '?'));
+
+    return parts.join(', ');
+  };
+
   const isSensitiveField = (el: Element): boolean => {
     const parts = [
       (el as HTMLInputElement).type || '',
@@ -406,6 +505,12 @@ export function snapshotInPage(
     if (input.readOnly) entry.readOnly = true;
     if (role === 'textbox' || role === 'select' || role === 'combobox' || role === 'checkbox' || role === 'radio') {
       entry.requiredness = requirednessOf(el, entry.name);
+      const section = sectionOf(el);
+      if (section) entry.section = section;
+      const error = errorFor(el);
+      if (error) entry.error = error;
+      const format = formatOf(el);
+      if (format) entry.format = format;
     }
     if (el.getAttribute('placeholder')) entry.placeholder = clamp(el.getAttribute('placeholder') || '', 80);
     if (sensitive) entry.sensitive = true;
@@ -415,6 +520,8 @@ export function snapshotInPage(
         typeof input.checked === 'boolean'
           ? input.checked
           : el.getAttribute('aria-checked') === 'true';
+      const groupName = squash(el.getAttribute('name') || '');
+      if (groupName) entry.group = clamp(groupName, 40);
     } else if (role === 'select') {
       const sel = el as unknown as HTMLSelectElement;
       const opts: string[] = [];
@@ -422,7 +529,12 @@ export function snapshotInPage(
         opts.push(squash(o.text) || o.value);
       }
       entry.options = opts;
-      entry.value = squash(sel.options?.[sel.selectedIndex]?.text || sel.value || '');
+      // A placeholder row — "Choose…", "-- Select --", value="" — is not a
+      // chosen value. Reporting its caption made an untouched required
+      // dropdown look filled, so nothing ever prompted the model to set it.
+      const selected = sel.options?.[sel.selectedIndex];
+      const rawValue = (selected ? selected.value : sel.value) ?? '';
+      entry.value = rawValue.trim() ? squash(selected?.text || rawValue) : '';
     } else if (!sensitive && (role === 'textbox' || role === 'combobox')) {
       const raw = (el as HTMLElement).isContentEditable
         ? squash((el as HTMLElement).innerText || '')
@@ -560,6 +672,38 @@ export function actInPage(action: AgentAction): ActionResult {
     if (tag === 'button' || tag === 'a' || tag === 'summary' || el.getAttribute('role') === 'button') {
       const t = squash((el as HTMLElement).innerText || el.textContent || '');
       if (t) return clamp(t);
+    }
+
+    // Same proximity search the snapshot uses. Without it the action log said
+    // 'Filled "formed"' — the name attribute — where the snapshot had
+    // correctly identified the field as "Date of formation".
+    const CONTROLS = 'input:not([type="hidden"]),select,textarea';
+    const textOf = (node: Element): string => {
+      const copy = node.cloneNode(true) as HTMLElement;
+      copy.querySelectorAll(CONTROLS + ',button').forEach((n) => n.remove());
+      return squash(copy.textContent || '');
+    };
+    let node: Element | null = el;
+    for (let depth = 0; node && depth < 4; depth++) {
+      let sibling = node.previousElementSibling;
+      let scanned = 0;
+      while (sibling && scanned < 3) {
+        if (!sibling.querySelector(CONTROLS)) {
+          const text = textOf(sibling);
+          if (text && text.length <= 90) return clamp(text);
+        }
+        sibling = sibling.previousElementSibling;
+        scanned++;
+      }
+      const parent: Element | null = node.parentElement;
+      if (!parent) break;
+      const controls = parent.querySelectorAll(CONTROLS);
+      if (controls.length > 1) break;
+      if (controls.length === 1 && controls[0] === el) {
+        const text = textOf(parent);
+        if (text && text.length <= 90) return clamp(text);
+      }
+      node = parent;
     }
 
     const placeholder = squash(el.getAttribute('placeholder') || el.getAttribute('title') || '');
@@ -754,24 +898,34 @@ export function actInPage(action: AgentAction): ActionResult {
           /* not focusable */
         }
 
+        // A real user physically cannot exceed maxlength; the value setter can,
+        // and the overflow is then silently dropped or rejected on submit.
+        const maxLength = Number(el.getAttribute('maxlength') || 0);
+        let wanted = action.value;
+        let truncated = false;
+        if (maxLength > 0 && wanted.length > maxLength) {
+          wanted = wanted.slice(0, maxLength);
+          truncated = true;
+        }
+
         if ((el as HTMLElement).isContentEditable) {
           const range = document.createRange();
           range.selectNodeContents(el);
           const sel = window.getSelection();
           sel?.removeAllRanges();
           sel?.addRange(range);
-          const inserted = document.execCommand('insertText', false, action.value);
+          const inserted = document.execCommand('insertText', false, wanted);
           if (!inserted) {
-            (el as HTMLElement).textContent = action.value;
-            el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: action.value }));
+            (el as HTMLElement).textContent = wanted;
+            el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: wanted }));
           }
         } else if (tag === 'input' || tag === 'textarea') {
           // Clear first so autocomplete widgets re-run their search, but do not
           // fire `change` on the empty value — that trips eager validators.
           setNativeValue(el, '');
           el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-          setNativeValue(el, action.value);
-          el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: action.value }));
+          setNativeValue(el, wanted);
+          el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: wanted }));
           el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
         } else {
           return { ok: false, message: 'Element ' + action.ref + ' is not a text field.' };
@@ -779,15 +933,51 @@ export function actInPage(action: AgentAction): ActionResult {
 
         if (action.pressEnter) sendKey(el, 'Enter');
 
-        const readBack = (el as HTMLElement).isContentEditable
-          ? (el as HTMLElement).innerText
-          : (el as HTMLInputElement).value;
-        const stuck = (readBack || '').trim() === action.value.trim();
+        const label = nameOf(el);
+        const readBack = (
+          (el as HTMLElement).isContentEditable ? (el as HTMLElement).innerText : (el as HTMLInputElement).value
+        ) || '';
+
+        // The browser rejects a malformed date or number outright and leaves
+        // the field empty. Reporting that as success let a batch sail on with
+        // required fields silently unfilled.
+        if (wanted.trim() && !readBack.trim()) {
+          const hint =
+            type === 'date' ? ' Dates must be written as YYYY-MM-DD.'
+              : type === 'month' ? ' Months must be written as YYYY-MM.'
+                : type === 'time' ? ' Times must be written as HH:MM.'
+                  : type === 'number' || type === 'range' ? ' This field only accepts digits.'
+                    : type === 'email' ? ' This field only accepts an email address.'
+                      : type === 'url' ? ' This field only accepts a URL.'
+                        : '';
+          return {
+            ok: false,
+            message: 'The browser rejected "' + action.value + '" for "' + label + '" and the field is still empty.' + hint,
+          };
+        }
+
+        // Constraint violations the setter can bypass but a submit will not.
+        let constraint = '';
+        const check = el as HTMLInputElement;
+        if (typeof check.checkValidity === 'function' && !check.checkValidity()) {
+          constraint = ' The page will reject it: ' + (check.validationMessage || 'value does not meet this field’s rules') + '.';
+        }
+
+        const notes: string[] = [];
+        if (truncated) notes.push('trimmed to the field’s ' + maxLength + '-character limit');
+        if (readBack.trim() !== wanted.trim()) notes.push('the field now reads "' + readBack.slice(0, 60) + '"');
+
         return {
-          ok: true,
-          message: stuck
-            ? 'Filled "' + nameOf(el) + '".'
-            : 'Filled "' + nameOf(el) + '" but the field now reads "' + (readBack || '').slice(0, 60) + '" — it may be reformatting or masking input.',
+          ok: !constraint,
+          message:
+            (constraint ? 'Filled "' : 'Filled "') +
+            label +
+            '" with "' +
+            readBack.slice(0, 60) +
+            '"' +
+            (notes.length ? ' (' + notes.join('; ') + ')' : '') +
+            '.' +
+            constraint,
         };
       }
 
