@@ -38,7 +38,13 @@ export interface SnapshotElement {
   checked?: boolean;
   /** Choices for <select> / listbox, truncated to a sane number. */
   options?: string[];
-  required?: boolean;
+  /**
+   * Whether the field must be filled. Most real forms mark this with a red
+   * asterisk in the label rather than the `required` attribute, so this is
+   * inferred from the label too — without it the model has no way to tell a
+   * mandatory field from an optional one and shifts values into the wrong box.
+   */
+  requiredness?: 'required' | 'optional' | 'unknown';
   disabled?: boolean;
   readOnly?: boolean;
   href?: string;
@@ -234,8 +240,10 @@ export type AgentStepStatus = 'running' | 'ok' | 'failed' | 'blocked' | 'skipped
 export interface AgentStep {
   id: string;
   index: number;
-  /** Short human sentence, e.g. `Clicked "Sign in"`. */
+  /** What happened, past tense: `Typed “Ada” into First name`. */
   label: string;
+  /** The same thing before it happens, for the step currently in flight. */
+  intent?: string;
   action: AgentAction;
   status: AgentStepStatus;
   detail?: string;
@@ -288,41 +296,109 @@ export function isHighRiskAction(action: AgentAction, element?: SnapshotElement)
   return false;
 }
 
-/** Human-readable one-liner for a step, used in the trace and confirm card. */
+/**
+ * Human-readable one-liner for a step, used in the trace and confirm card.
+ *
+ * These say what was actually done and to what — "Typed 456 Oak Avenue into
+ * STREET", not "Type into field". When a run goes wrong, this line is how the
+ * user spots it, so the value and the target both have to be in it.
+ */
 export function describeAction(action: AgentAction, element?: SnapshotElement): string {
-  const label = element?.name ? `"${truncate(element.name, 48)}"` : action.type === 'click' ? 'element' : '';
+  const name = element?.name ? cleanLabel(element.name) : '';
+  const into = name ? ` into ${name}` : '';
+  const on = name ? ` ${name}` : '';
 
   switch (action.type) {
     case 'click':
-      return `Click ${label || 'element'}`;
+      return name ? `Clicked ${name}` : 'Clicked an element';
     case 'fill':
-      return `Type into ${label || 'field'}`;
+      return action.value
+        ? `Typed “${truncate(action.value, 40)}”${into || ' into a field'}`
+        : `Cleared${on || ' a field'}`;
     case 'select':
-      return `Choose "${truncate(action.value, 40)}" in ${label || 'dropdown'}`;
+      return `Chose “${truncate(action.value, 36)}”${name ? ` in ${name}` : ' in a dropdown'}`;
     case 'setCheckbox':
-      return `${action.checked ? 'Check' : 'Uncheck'} ${label || 'checkbox'}`;
+      return `${action.checked ? 'Ticked' : 'Unticked'}${on || ' a checkbox'}`;
     case 'hover':
-      return `Hover ${label || 'element'}`;
+      return `Hovered${on || ' an element'}`;
     case 'pressKey':
-      return `Press ${action.key}`;
+      return `Pressed ${action.key}${name ? ` in ${name}` : ''}`;
     case 'scroll':
-      return `Scroll ${action.direction}`;
+      return action.direction === 'top'
+        ? 'Scrolled to the top'
+        : action.direction === 'bottom'
+          ? 'Scrolled to the bottom'
+          : `Scrolled ${action.direction}`;
     case 'scrollToElement':
-      return `Scroll to ${label || 'element'}`;
+      return `Scrolled to${on || ' an element'}`;
     case 'submit':
-      return `Submit form ${label}`.trim();
+      return name ? `Submitted ${name}` : 'Submitted the form';
     case 'navigate':
-      return `Open ${truncate(action.url, 60)}`;
+      return `Opened ${prettyUrl(action.url)}`;
     case 'goBack':
-      return 'Go back';
+      return 'Went back';
     case 'wait':
-      return action.text ? `Wait for "${truncate(action.text, 30)}"` : 'Wait';
+      return action.text ? `Waited for “${truncate(action.text, 30)}”` : 'Waited for the page';
     case 'readPage':
       return 'Re-read the page';
     case 'ask':
-      return 'Ask the user';
+      return 'Asked you a question';
     case 'done':
-      return 'Finish';
+      return 'Finished';
+  }
+}
+
+/**
+ * The same description before the fact — for the step that is currently
+ * running, and for the confirmation card, where "Submitted the form" would be
+ * an alarming way to ask permission.
+ */
+export function describeIntent(action: AgentAction, element?: SnapshotElement): string {
+  const name = element?.name ? cleanLabel(element.name) : '';
+  const into = name ? ` into ${name}` : '';
+  const on = name ? ` ${name}` : '';
+
+  switch (action.type) {
+    case 'click':
+      return name ? `Click ${name}` : 'Click an element';
+    case 'fill':
+      return action.value
+        ? `Type “${truncate(action.value, 40)}”${into || ' into a field'}`
+        : `Clear${on || ' a field'}`;
+    case 'select':
+      return `Choose “${truncate(action.value, 36)}”${name ? ` in ${name}` : ' in a dropdown'}`;
+    case 'setCheckbox':
+      return `${action.checked ? 'Tick' : 'Untick'}${on || ' a checkbox'}`;
+    case 'submit':
+      return name ? `Submit ${name}` : 'Submit the form';
+    case 'navigate':
+      return `Open ${prettyUrl(action.url)}`;
+    case 'goBack':
+      return 'Go back';
+    case 'pressKey':
+      return `Press ${action.key}${name ? ` in ${name}` : ''}`;
+    default:
+      // The rest read the same either way.
+      return describeAction(action, element);
+  }
+}
+
+/** Labels carry markup noise like a required asterisk; drop it for display. */
+function cleanLabel(name: string): string {
+  const trimmed = name
+    .replace(/\s*\*\s*$/, '')
+    .replace(/\s*\(\s*optional\s*\)\s*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return truncate(trimmed, 44);
+}
+
+function prettyUrl(url: string): string {
+  try {
+    const parsed = new URL(/^https?:\/\//i.test(url) ? url : 'https://' + url);
+    return truncate(parsed.host.replace(/^www\./, '') + (parsed.pathname === '/' ? '' : parsed.pathname), 44);
+  } catch {
+    return truncate(url, 44);
   }
 }
 

@@ -92,7 +92,9 @@ function StepRow({ step }: { step: AgentStep }) {
           }`}
         >
           <ActionIcon action={step.action} className="w-3.5 h-3.5 inline-block mr-1 -mt-0.5 opacity-60" />
-          {step.label}
+          {/* The stored label is past tense; a step still in flight reads
+              better in the present. */}
+          {step.status === 'running' ? (step.intent ?? step.label) + '…' : step.label}
         </p>
         {step.detail && step.status !== 'ok' && (
           <p className="text-[11px] leading-snug break-words mt-0.5" style={{ color: tone }}>

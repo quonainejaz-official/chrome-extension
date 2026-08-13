@@ -151,6 +151,37 @@ export function snapshotInPage(
     return 'other';
   };
 
+  // Forms overwhelmingly signal "required" with a red asterisk next to the
+  // label, and "optional" with the word in parentheses. Reading only the
+  // `required` attribute told the model nothing, so it treated every field as
+  // equally fillable and shifted values into optional boxes.
+  const requirednessOf = (el: Element, name: string): 'required' | 'optional' | 'unknown' => {
+    const input = el as HTMLInputElement;
+    if (input.required || el.getAttribute('aria-required') === 'true') return 'required';
+    if (el.getAttribute('aria-required') === 'false') return 'optional';
+
+    // Look at the label text, plus a small amount of surrounding markup —
+    // the asterisk is usually a sibling <span> or <abbr>, not part of the
+    // input's own attributes.
+    let labelText = name;
+    if (el.id) {
+      let escaped = el.id;
+      try {
+        escaped = (window as any).CSS && CSS.escape ? CSS.escape(el.id) : el.id.replace(/"/g, '\\"');
+      } catch {
+        /* keep raw id */
+      }
+      const forLabel = document.querySelector('label[for="' + escaped + '"]');
+      if (forLabel) labelText += ' ' + (forLabel.textContent || '');
+    }
+    const wrapping = el.closest('label');
+    if (wrapping) labelText += ' ' + (wrapping.textContent || '');
+
+    if (/\boptional\b|\(\s*optional\s*\)/i.test(labelText)) return 'optional';
+    if (/\*/.test(labelText) || /\brequired\b/i.test(labelText)) return 'required';
+    return 'unknown';
+  };
+
   const isSensitiveField = (el: Element): boolean => {
     const parts = [
       (el as HTMLInputElement).type || '',
@@ -308,8 +339,10 @@ export function snapshotInPage(
 
     if (tag === 'input') entry.type = (input.type || 'text').toLowerCase();
     if (input.disabled) entry.disabled = true;
-    if (input.required) entry.required = true;
     if (input.readOnly) entry.readOnly = true;
+    if (role === 'textbox' || role === 'select' || role === 'combobox' || role === 'checkbox' || role === 'radio') {
+      entry.requiredness = requirednessOf(el, entry.name);
+    }
     if (el.getAttribute('placeholder')) entry.placeholder = clamp(el.getAttribute('placeholder') || '', 80);
     if (sensitive) entry.sensitive = true;
 

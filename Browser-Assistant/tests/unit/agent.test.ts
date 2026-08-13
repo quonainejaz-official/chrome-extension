@@ -6,6 +6,7 @@ import {
   isConsequentialAction,
   isHighRiskAction,
   describeAction,
+  describeIntent,
   type PageSnapshot,
   type SnapshotElement,
 } from '../../src/shared/actions';
@@ -254,6 +255,20 @@ describe('planBatch', () => {
   });
 });
 
+describe('field requiredness in the rendered snapshot', () => {
+  // The regression: a form marking required fields with a red asterisk and
+  // optional ones with "(optional)" gave the model no signal at all, so it
+  // filled the optional Suite box and shifted City/State/ZIP down one row.
+  it('carries required and optional through to the element list', () => {
+    const page = snapshot([
+      element({ ref: 'e4', role: 'textbox', name: 'SUITE / UNIT (OPTIONAL)', requiredness: 'optional' }),
+      element({ ref: 'e5', role: 'textbox', name: 'CITY *', requiredness: 'required' }),
+    ]);
+    expect(page.elements[0].requiredness).toBe('optional');
+    expect(page.elements[1].requiredness).toBe('required');
+  });
+});
+
 describe('detectHandoff', () => {
   it('recognises the sentinel as the whole reply', () => {
     expect(detectHandoff('{"handoff":"act","goal":"fill in the signup form"}')).toEqual({
@@ -321,11 +336,36 @@ describe('isHighRiskAction', () => {
 });
 
 describe('describeAction', () => {
-  it('produces a readable label', () => {
-    expect(describeAction({ type: 'click', ref: 'e1' }, element({ name: 'Sign in' }))).toBe('Click "Sign in"');
+  it('says what was done and to what, so a wrong value is visible', () => {
+    expect(
+      describeAction({ type: 'fill', ref: 'e1', value: '456 Oak Avenue' }, element({ name: 'STREET *' }))
+    ).toBe('Typed “456 Oak Avenue” into STREET');
+    expect(describeAction({ type: 'click', ref: 'e1' }, element({ name: 'Sign in' }))).toBe('Clicked Sign in');
     expect(describeAction({ type: 'setCheckbox', ref: 'e1', checked: false }, element({ name: 'Remember me' }))).toBe(
-      'Uncheck "Remember me"'
+      'Unticked Remember me'
     );
-    expect(describeAction({ type: 'scroll', direction: 'bottom' })).toBe('Scroll bottom');
+    expect(describeAction({ type: 'scroll', direction: 'bottom' })).toBe('Scrolled to the bottom');
+  });
+
+  it('strips required/optional decoration from the label', () => {
+    expect(describeAction({ type: 'click', ref: 'e1' }, element({ name: 'CITY *' }))).toBe('Clicked CITY');
+    expect(
+      describeAction({ type: 'fill', ref: 'e1', value: 'x' }, element({ name: 'SUITE / UNIT (OPTIONAL)' }))
+    ).toBe('Typed “x” into SUITE / UNIT');
+  });
+
+  it('reads as an instruction before the fact, for the confirmation card', () => {
+    expect(describeIntent({ type: 'submit', ref: 'f1' }, element({ name: 'Create order' }))).toBe(
+      'Submit Create order'
+    );
+    expect(describeIntent({ type: 'fill', ref: 'e1', value: 'Ada' }, element({ name: 'First name' }))).toBe(
+      'Type “Ada” into First name'
+    );
+  });
+
+  it('shortens a URL to something a person can read', () => {
+    expect(describeAction({ type: 'navigate', url: 'https://www.example.com/some/path?q=1' })).toBe(
+      'Opened example.com/some/path'
+    );
   });
 });
