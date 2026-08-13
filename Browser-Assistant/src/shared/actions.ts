@@ -230,8 +230,13 @@ export function batchClass(action: AgentAction, element?: SnapshotElement): Batc
   }
 }
 
-/** Caps how much a single model turn may plan, so one bad reply can't run away. */
-export const MAX_BATCH_ACTIONS = 8;
+/**
+ * Caps how much a single model turn may plan, so one bad reply cannot run
+ * away. Set high enough that a long form is one round-trip rather than
+ * several — round-trips are what make a run feel slow and what trip free-tier
+ * rate limits.
+ */
+export const MAX_BATCH_ACTIONS = 25;
 
 // ── Trace ───────────────────────────────────────────────────────
 

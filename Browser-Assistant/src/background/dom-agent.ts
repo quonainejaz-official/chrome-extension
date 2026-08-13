@@ -100,6 +100,14 @@ export function snapshotInPage(
       if (t) return clamp(t, 120);
     }
 
+    // Plenty of forms render the label as a plain sibling with no `for` and no
+    // wrapping — visually obvious, invisible to the DOM association rules.
+    // Without this the name fell all the way through to the field's own VALUE,
+    // so the model was told a field was called "Wilmington" when that was
+    // simply what someone had typed into it.
+    const nearby = nearbyLabel(el);
+    if (nearby) return clamp(nearby, 120);
+
     const placeholder = squash(attr('placeholder'));
     if (placeholder) return clamp(placeholder, 120);
 
@@ -121,11 +129,67 @@ export function snapshotInPage(
     const nameAttr = squash(attr('name'));
     if (nameAttr) return clamp(nameAttr, 120);
 
-    const val = squash((el as HTMLInputElement).value || '');
-    if (val) return clamp(val, 60);
+    // A control's value is deliberately NOT a fallback name. Naming a text
+    // field after whatever it currently contains is worse than having no name
+    // at all — it actively misleads. Buttons are the exception, since their
+    // value really is their caption.
+    const tag = el.tagName.toLowerCase();
+    const type = ((el as HTMLInputElement).type || '').toLowerCase();
+    if (tag === 'button' || type === 'submit' || type === 'button' || type === 'reset') {
+      const val = squash((el as HTMLInputElement).value || '');
+      if (val) return clamp(val, 60);
+    }
 
     return '';
   };
+
+  /**
+   * Finds the visible label for a control that is not associated with one.
+   * Looks at earlier siblings first (labels sit above or to the left), then at
+   * ancestors that wrap exactly this one control.
+   */
+  function nearbyLabel(el: Element): string {
+    const CONTROLS = 'input:not([type="hidden"]),select,textarea';
+    const textOf = (node: Element): string => {
+      const clone = node.cloneNode(true) as HTMLElement;
+      clone.querySelectorAll(CONTROLS + ',button').forEach((n) => n.remove());
+      return squash(clone.textContent || '');
+    };
+
+    let node: Element | null = el;
+    for (let depth = 0; node && depth < 4; depth++) {
+      let sibling = node.previousElementSibling;
+      let scanned = 0;
+      while (sibling && scanned < 3) {
+        if (!sibling.querySelector(CONTROLS)) {
+          const text = textOf(sibling);
+          if (text && text.length <= 90) return text;
+        }
+        sibling = sibling.previousElementSibling;
+        scanned++;
+      }
+
+      const parent: Element | null = node.parentElement;
+      if (!parent) break;
+
+      const controls = parent.querySelectorAll(CONTROLS);
+      // A wrapper holding several fields tells us nothing about which is which.
+      if (controls.length > 1) break;
+
+      if (controls.length === 1 && controls[0] === el) {
+        const label = parent.querySelector('label');
+        if (label) {
+          const text = textOf(label);
+          if (text && text.length <= 90) return text;
+        }
+        const text = textOf(parent);
+        if (text && text.length <= 90) return text;
+      }
+
+      node = parent;
+    }
+    return '';
+  }
 
   // ── role ──
   const roleOf = (el: Element): string => {
