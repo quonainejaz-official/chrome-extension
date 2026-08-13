@@ -1,4 +1,4 @@
-import { sendChatMessage, detectHandoff } from './api-client';
+import { sendChatMessage, detectHandoff, looksLikeHandoff } from './api-client';
 import {
   getSettings,
   saveSettings,
@@ -325,9 +325,9 @@ async function handleSidePanelMessage(
       }
 
       // Did the model decide this was a job rather than a question?
-      if (!chatFailed && canAct && activeTab?.id) {
-        const handoff = detectHandoff(fullContent);
-        if (handoff) {
+      if (!chatFailed) {
+        const handoff = canAct && activeTab?.id ? detectHandoff(fullContent) : null;
+        if (handoff && activeTab?.id) {
           // Drop the placeholder — the sentinel is plumbing, not an answer.
           conversation.messages.pop();
           conversation.updatedAt = Date.now();
@@ -341,6 +341,18 @@ async function handleSidePanelMessage(
             model: modelConfig,
             tabId: activeTab.id,
           });
+        }
+
+        // The model asked to act but we could not start a run, or the sentinel
+        // was malformed. Either way the raw marker must never reach the user.
+        if (looksLikeHandoff(fullContent)) {
+          fullContent = !settings.agentEnabled
+            ? 'I can only read this page — acting on pages is switched off in Settings. Turn on "Let the assistant act on pages" and ask me again.'
+            : activeRun
+              ? 'I am already working on the page. Let that finish, or press Stop, then ask me again.'
+              : !activeTab?.id || !/^https?:/i.test(activeTab.url ?? '')
+                ? 'I cannot act on this page — Chrome blocks automation on browser system pages. Open a normal website and ask me again.'
+                : 'I could not start working on the page. Please ask me again.';
         }
       }
 

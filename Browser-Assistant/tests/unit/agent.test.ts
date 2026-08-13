@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseAgentReply, planBatch } from '../../src/background/agent';
-import { detectHandoff } from '../../src/background/api-client';
+import { detectHandoff, looksLikeHandoff } from '../../src/background/api-client';
 import {
   batchClass,
   isConsequentialAction,
@@ -280,15 +280,40 @@ describe('detectHandoff', () => {
     expect(detectHandoff('\n  {"handoff":"act","goal":"click submit"}  \n')).toEqual({ goal: 'click submit' });
   });
 
+  // The regression: one stray closing quote made detection fail, so the raw
+  // sentinel was rendered to the user as the answer and no run ever started.
+  it('tolerates a stray trailing quote', () => {
+    expect(detectHandoff('{"handoff":"act","goal":"Fill the form and validate"}"')).toEqual({
+      goal: 'Fill the form and validate',
+    });
+  });
+
+  it('tolerates a wrapping code fence and trailing punctuation', () => {
+    expect(detectHandoff('```json\n{"handoff":"act","goal":"fill it"}\n```')).toEqual({ goal: 'fill it' });
+    expect(detectHandoff('{"handoff":"act","goal":"fill it"}.')).toEqual({ goal: 'fill it' });
+  });
+
+  it('recognises the marker even when the object is unparseable', () => {
+    // Cannot start a run from it, but it must never be shown to the user.
+    expect(looksLikeHandoff('{"handoff":"act","goal":"broken}')).toBe(true);
+    expect(looksLikeHandoff('The form has three required fields.')).toBe(false);
+  });
+
   it('ignores an answer that merely mentions the sentinel', () => {
     expect(
       detectHandoff('The page has a handoff field. For example {"handoff":"act","goal":"x"} would start a run.')
     ).toBeNull();
   });
 
-  it('ignores a long reply even if it starts and ends with braces', () => {
-    const long = '{"handoff":"act","goal":"' + 'x'.repeat(500) + '"}';
+  it('ignores a reply too long to be a sentinel', () => {
+    const long = '{"handoff":"act","goal":"' + 'x'.repeat(700) + '"}';
     expect(detectHandoff(long)).toBeNull();
+  });
+
+  it('ignores an answer that wraps the marker in prose', () => {
+    expect(
+      detectHandoff('To act, the model returns {"handoff":"act","goal":"x"} — that is how the plumbing works.')
+    ).toBeNull();
   });
 
   it('ignores ordinary prose and other JSON', () => {

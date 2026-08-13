@@ -148,12 +148,50 @@ export async function sendChatMessage(
  */
 export function detectHandoff(reply: string): { goal: string } | null {
   const trimmed = reply.trim();
-  if (trimmed.length > 400) return null;
-  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
+  if (trimmed.length > 600) return null;
+
+  // Locate a balanced {...}. Requiring the reply to start with "{" and end
+  // with "}" was too brittle: models routinely add a stray closing quote, a
+  // full stop, or a code fence, and every one of those leaked the raw
+  // sentinel into the chat as if it were the answer.
+  const start = trimmed.indexOf('{');
+  if (start < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let end = -1;
+
+  for (let i = start; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  if (end < 0) return null;
+
+  // Still strict about context: only punctuation and fences may surround it,
+  // so a genuine answer that merely discusses handoffs cannot trigger a run.
+  const before = trimmed.slice(0, start);
+  const after = trimmed.slice(end + 1);
+  if (!/^[\s"'`]*(?:json)?[\s"'`]*$/i.test(before)) return null;
+  if (!/^[\s"'`.,;!]*$/.test(after)) return null;
 
   let parsed: any;
   try {
-    parsed = JSON.parse(trimmed);
+    parsed = JSON.parse(trimmed.slice(start, end + 1));
   } catch {
     return null;
   }
@@ -161,6 +199,14 @@ export function detectHandoff(reply: string): { goal: string } | null {
   if (!parsed || parsed[HANDOFF_MARKER] !== 'act') return null;
   const goal = typeof parsed.goal === 'string' ? parsed.goal.trim() : '';
   return { goal };
+}
+
+/**
+ * Last line of defence: the sentinel is plumbing and must never be rendered as
+ * an answer, even when the run could not be started.
+ */
+export function looksLikeHandoff(reply: string): boolean {
+  return reply.trim().length < 600 && new RegExp(`"${HANDOFF_MARKER}"\\s*:\\s*"act"`).test(reply);
 }
 
 export interface ChatTurn {

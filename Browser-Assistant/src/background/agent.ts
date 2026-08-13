@@ -637,7 +637,12 @@ Set "userAuthorized" to true ONLY when the user's own message explicitly asked f
 2. STOP the list at the first click, submit, navigate, scroll, hover, key press, or Enter: that action must be the LAST item, because the page reacts to it and every ref after it is stale. A list with one item is always fine.
 3. Use only refs that appear in the CURRENT snapshot — refs are renumbered every turn.
 4. Match every value to its OWN label, never to position in the list. Fields marked REQUIRED must be filled. Fields marked OPTIONAL must be left empty unless the user specifically asked for them — putting a value in an optional field and then shifting everything else down one row is the single most common way this goes wrong. Before you send a batch, read your list back: does each value belong under that exact label? A ZIP belongs in ZIP, not State.
-5. Never invent personal data. Use the user's saved details below, or what they told you in chat. If a REQUIRED field has no value available, use "ask" rather than guessing.
+5. Where values come from, in order:
+   a. Anything the user typed in this conversation — always use that first, exactly as given.
+   b. Their saved details below.
+   c. If the user asked for TEST, dummy, sample, placeholder, fake or "realistic" data — or asked you to try, check or test the form, in any language ("test data se bhar do", "koi bhi data", "apne se bhar do", "random") — then INVENT sensible, well-formed values yourself and get on with it. Do NOT ask. Make them obviously plausible and internally consistent: a real-looking name, an email that matches the name, a valid-looking phone, a genuine city/state/postcode combination for the country in question.
+   d. Only when the task needs the user's OWN real details, none are saved, and they did not ask for test data, use "ask" — and ask once, listing every missing field together, never one at a time.
+   Never invent data you are about to submit as if it were real: filling a form with test values is fine, sending it is the user's call.
 6. Before finishing, look at the current snapshot and confirm every REQUIRED field holds a sensible value. I re-check this myself and will send the form back to you if it is wrong, so checking first saves a round-trip.
 7. Fields marked LOCKED (passwords, card numbers, CVV, OTP, ID numbers) cannot be filled — they are blocked at the browser level. Leave them out of your list entirely and mention in your summary that the user needs to type those themselves.
 8. Filling a form is not submitting it. Only use "submit" (or click a submit button) when the user asked you to, and set "userAuthorized" accordingly. Otherwise fill everything, then finish with "done" and tell the user it is ready for them to review and send.
@@ -663,8 +668,11 @@ ${details}
 Current goal, verbatim from the user: ${JSON.stringify(goal)}`;
 }
 
+const NO_PROFILE_NOTE =
+  '# User details\n(none saved)\nThis does NOT stop you. If the user asked for test or sample data, invent sensible values. Only ask them when the task genuinely needs their own real details.';
+
 function renderProfile(profile: UserProfile | undefined): string {
-  if (!profile) return '# User details\n(none saved — use "ask" if a form needs personal data)';
+  if (!profile) return NO_PROFILE_NOTE;
 
   const rows: string[] = [];
   const push = (label: string, value: string | undefined) => {
@@ -687,9 +695,7 @@ function renderProfile(profile: UserProfile | undefined): string {
   push('Website', profile.website);
   for (const extra of profile.custom ?? []) push(extra.label, extra.value);
 
-  if (rows.length === 0) {
-    return '# User details\n(none saved — use "ask" if a form needs personal data)';
-  }
+  if (rows.length === 0) return NO_PROFILE_NOTE;
 
   return (
     '# User details (saved by the user, safe to type into forms)\n' +
