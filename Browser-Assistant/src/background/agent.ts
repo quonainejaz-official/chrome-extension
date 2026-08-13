@@ -613,7 +613,9 @@ function hostOf(url: string): string {
 function buildSystemPrompt(profile: UserProfile | undefined, goal: string): string {
   const details = renderProfile(profile);
 
-  return `You are the hands of the user inside their Chrome browser. You do not just read pages — you operate them: clicking, typing, choosing from dropdowns, ticking boxes, scrolling and submitting, on the user's behalf.
+  return `You are the hands of the user inside their Chrome browser. You do not just read pages — you operate them: clicking, typing, choosing from dropdowns, ticking boxes, scrolling, navigating and submitting, on the user's behalf.
+
+Forms are the common case, not the limit. You can also find and open things, work through a multi-step flow, read a table or a list back to the user, check what a page says after an action, drive an app by keyboard, dismiss overlays, compare two pages, and work out for yourself what steps a request needs. Take the request at face value and get it done; do not narrow it to "fill in fields".
 
 Each turn you get a fresh snapshot of the page the user is looking at. You reply with a LIST of actions. Then you get the results plus a new snapshot, and you go again, until the goal is met.
 
@@ -639,6 +641,11 @@ Set "userAuthorized" to true ONLY when the user's own message explicitly asked f
 {"type":"navigate","url":"https://…"}                    load a different page in this tab
 {"type":"goBack"}                                        browser back
 {"type":"wait","ms":1500,"text":"Order confirmed"}       pause; "text" waits until that text appears
+{"type":"clear","ref":"e7"}                              empty a field
+{"type":"inspect","ref":"e7"}                            read the text around an element (row, card, error) without touching it
+{"type":"hotkey","key":"a","ctrl":true,"ref":"e7"}       a chord: ctrl / meta / shift / alt + key
+{"type":"extract","ref":"e20"}                           pull a table or list out as text; omit ref for the whole page
+{"type":"readPage"}                                      re-read the page prose
 {"type":"ask","question":"…"}                            stop and ask the user something you cannot work out
 {"type":"done","summary":"…"}                            finished — summary is what the user reads
 
@@ -1081,6 +1088,33 @@ function coerceAction(raw: any): { action: AgentAction | null; error?: string } 
     case 'readPage':
       return { action: { type: 'readPage' } };
 
+    case 'clear':
+      if (!ref) return { action: null, error: '"clear" needs a "ref".' };
+      return { action: { type: 'clear', ref } };
+
+    case 'inspect':
+      if (!ref) return { action: null, error: '"inspect" needs a "ref".' };
+      return { action: { type: 'inspect', ref } };
+
+    case 'hotkey': {
+      const pressed = String(raw.key ?? value ?? '').trim();
+      if (!pressed) return { action: null, error: '"hotkey" needs a "key".' };
+      return {
+        action: {
+          type: 'hotkey',
+          key: pressed,
+          ctrl: raw.ctrl === true || raw.control === true,
+          meta: raw.meta === true || raw.cmd === true,
+          shift: raw.shift === true,
+          alt: raw.alt === true,
+          ref: ref || undefined,
+        },
+      };
+    }
+
+    case 'extract':
+      return { action: { type: 'extract', target: raw.target ? String(raw.target) : undefined, ref: ref || undefined } };
+
     case 'ask': {
       const question = String(raw.question ?? raw.summary ?? value ?? '').trim();
       if (!question) return { action: null, error: '"ask" needs a "question".' };
@@ -1099,7 +1133,8 @@ function coerceAction(raw: any): { action: AgentAction | null; error?: string } 
 
 const KNOWN_TYPES = [
   'click', 'fill', 'select', 'setCheckbox', 'hover', 'pressKey', 'scroll',
-  'scrollToElement', 'submit', 'navigate', 'goBack', 'wait', 'readPage', 'ask', 'done',
+  'scrollToElement', 'submit', 'navigate', 'goBack', 'wait', 'readPage',
+  'inspect', 'clear', 'hotkey', 'extract', 'ask', 'done',
 ];
 
 function matchKnownType(normalized: string): string | null {

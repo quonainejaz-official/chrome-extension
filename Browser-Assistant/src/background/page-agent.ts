@@ -128,7 +128,9 @@ export async function snapshotTab(
 
 // ── Action execution ────────────────────────────────────────────
 
-const ACTIONS_WITH_REF = ['click', 'fill', 'select', 'setCheckbox', 'hover', 'scrollToElement', 'submit'] as const;
+const ACTIONS_WITH_REF = [
+  'click', 'fill', 'select', 'setCheckbox', 'hover', 'scrollToElement', 'submit', 'clear', 'inspect',
+] as const;
 
 /**
  * Runs one action. Page-level actions are injected into the frame that owns

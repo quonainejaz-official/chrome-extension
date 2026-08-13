@@ -1132,6 +1132,123 @@ export function actInPage(action: AgentAction): ActionResult {
         return { ok: true, message: 'Submitted the form.', navigated: window.location.href !== before };
       }
 
+      case 'clear': {
+        const el = byRef(action.ref);
+        if (!el) return { ok: false, message: 'Field ' + action.ref + ' no longer exists on the page.' };
+        try {
+          (el as HTMLElement).focus({ preventScroll: true });
+        } catch {
+          /* not focusable */
+        }
+        if ((el as HTMLElement).isContentEditable) {
+          (el as HTMLElement).textContent = '';
+        } else {
+          setNativeValue(el, '');
+        }
+        el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+        return { ok: true, message: 'Cleared "' + nameOf(el) + '".' };
+      }
+
+      case 'inspect': {
+        const el = byRef(action.ref);
+        if (!el) return { ok: false, message: 'Element ' + action.ref + ' no longer exists on the page.' };
+        // Climb only until the surroundings say something. Going further keeps
+        // widening until it returns the whole page, which is useless — the
+        // point of inspect is the row or card, not the document.
+        let node: Element = el;
+        let text = '';
+        for (let depth = 0; depth < 4; depth++) {
+          const parent = node.parentElement;
+          if (!parent || parent === document.body || parent === document.documentElement) break;
+          node = parent;
+          const candidate = ((node as HTMLElement).innerText || node.textContent || '').replace(/\s+/g, ' ').trim();
+          if (candidate.length >= 25) {
+            text = candidate;
+            break;
+          }
+          text = candidate || text;
+        }
+        return {
+          ok: true,
+          message: 'Around "' + nameOf(el) + '": ' + (text ? text.slice(0, 500) : '(no surrounding text)'),
+        };
+      }
+
+      case 'hotkey': {
+        const el = action.ref ? byRef(action.ref) : document.activeElement || document.body;
+        if (!el) return { ok: false, message: 'Element ' + action.ref + ' no longer exists on the page.' };
+        const before = window.location.href;
+        const info = keyInfo(action.key);
+        for (const type of ['keydown', 'keyup']) {
+          const ev = new KeyboardEvent(type, {
+            key: info.key,
+            code: info.code,
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            ctrlKey: !!action.ctrl,
+            metaKey: !!action.meta,
+            shiftKey: !!action.shift,
+            altKey: !!action.alt,
+          });
+          Object.defineProperty(ev, 'keyCode', { get: () => info.keyCode });
+          Object.defineProperty(ev, 'which', { get: () => info.keyCode });
+          el.dispatchEvent(ev);
+        }
+        const combo =
+          [action.ctrl && 'Ctrl', action.meta && 'Meta', action.shift && 'Shift', action.alt && 'Alt', action.key]
+            .filter(Boolean)
+            .join('+');
+        return { ok: true, message: 'Pressed ' + combo + '.', navigated: window.location.href !== before };
+      }
+
+      case 'extract': {
+        const scope = action.ref ? byRef(action.ref) : document.body;
+        if (!scope) return { ok: false, message: 'Element ' + action.ref + ' no longer exists on the page.' };
+
+        // A cell's text excludes what is typed into any control inside it, so
+        // read those out too — otherwise extracting a filled-in table returns
+        // only the column headings.
+        const cellText = (cell: Element): string => {
+          const own = ((cell as HTMLElement).innerText || cell.textContent || '').replace(/\s+/g, ' ').trim();
+          const entered: string[] = [];
+          for (const control of Array.from(cell.querySelectorAll('input,select,textarea'))) {
+            const field = control as HTMLInputElement;
+            if ((field.type || '').toLowerCase() === 'hidden') continue;
+            if (field.type === 'checkbox' || field.type === 'radio') {
+              entered.push(field.checked ? '[x]' : '[ ]');
+            } else if (field.value) {
+              entered.push(field.value);
+            }
+          }
+          return [own, entered.join(' ')].filter(Boolean).join(' ').trim();
+        };
+
+        const rows: string[] = [];
+        const tables = Array.from(scope.querySelectorAll('table')).slice(0, 3);
+        for (const table of tables) {
+          for (const tr of Array.from(table.querySelectorAll('tr')).slice(0, 40)) {
+            const cells = Array.from(tr.querySelectorAll('th,td')).map(cellText).filter(Boolean);
+            if (cells.length) rows.push(cells.join(' | '));
+          }
+          if (rows.length) rows.push('');
+        }
+
+        if (rows.length === 0) {
+          const items = Array.from(scope.querySelectorAll('li,[role="listitem"],[role="row"]')).slice(0, 60);
+          for (const item of items) {
+            const text = ((item as HTMLElement).innerText || item.textContent || '').replace(/\s+/g, ' ').trim();
+            if (text && text.length < 300) rows.push('- ' + text);
+          }
+        }
+
+        if (rows.length === 0) {
+          return { ok: false, message: 'Found no table or list to extract here. Use readPage for prose.' };
+        }
+        return { ok: true, message: 'Extracted ' + rows.length + ' rows:\n' + rows.join('\n').slice(0, 4000) };
+      }
+
       case 'wait':
       case 'readPage':
       case 'navigate':

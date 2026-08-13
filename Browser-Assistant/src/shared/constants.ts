@@ -7,10 +7,11 @@ export const OPENCODE_ZEN_BASE_URL = 'https://opencode.ai/zen/v1';
 export const DEFAULT_OPENCODE_ZEN_KEY: string =
   (import.meta as any).env?.VITE_OPENCODE_ZEN_KEY ?? '';
 
-// The model used out of the box. `big-pickle` requires no payment method on
-// the OpenCode Zen account (unlike the metered Anthropic/OpenAI/Google models
-// below), so brand-new installs work immediately with just the default key.
-export const DEFAULT_MODEL_ID = 'big-pickle';
+// The model used out of the box. Free (no payment method needed) and, of the
+// free tier, the one that reliably answers rather than returning a free-usage
+// limit. It is a reasoning model, so it thinks for ~20-30s before its first
+// token — which is why the agent batches as much work as possible per turn.
+export const DEFAULT_MODEL_ID = 'nemotron-3-ultra-free';
 
 // Curated subset of OpenCode Zen models shown in the picker.
 // The full catalogue lives at https://opencode.ai/zen/v1/models
@@ -22,12 +23,14 @@ export interface BuiltinModel {
 }
 
 export const BUILTIN_MODELS: BuiltinModel[] = [
-  // Free tier — no billing required, work out of the box.
+  // Free tier — no billing required. Default first.
+  // `ling-3.0-flash-free` was removed: the provider now rejects it outright
+  // ("Model ling-3.0-flash-free is not supported"), so listing it only ever
+  // produced a confusing failure.
+  { id: 'nemotron-3-ultra-free', label: 'Nemotron 3 Ultra (Free)', group: 'Free', free: true },
   { id: 'big-pickle', label: 'Big Pickle', group: 'Free', free: true },
   { id: 'mimo-v2.5-free', label: 'MiMo 2.5 (Free)', group: 'Free', free: true },
   { id: 'deepseek-v4-flash-free', label: 'DeepSeek V4 Flash (Free)', group: 'Free', free: true },
-  { id: 'ling-3.0-flash-free', label: 'Ling 3.0 Flash (Free)', group: 'Free', free: true },
-  { id: 'nemotron-3-ultra-free', label: 'Nemotron 3 Ultra (Free)', group: 'Free', free: true },
   // Anthropic (metered — requires a payment method on the account)
   { id: 'claude-sonnet-5', label: 'Claude Sonnet 5', group: 'Anthropic' },
   { id: 'claude-opus-5', label: 'Claude Opus 5', group: 'Anthropic' },
@@ -50,6 +53,10 @@ export const PAGE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 export const API_TIMEOUT = 60000; // 60 seconds to first byte
 // Once tokens are flowing, a much shorter gap means the stream has stalled.
 export const STREAM_IDLE_TIMEOUT = 30000;
+// Hard ceiling on any single request. Reasoning models keep the connection
+// alive while they think, so without this a queued request can hang for
+// minutes and still return nothing.
+export const MAX_REQUEST_TIME = 120000;
 export const MAX_RETRIES = 3;
 export const RETRY_BASE_DELAY = 1000;
 // Ceiling for a single backoff sleep. A provider that asks for a two-minute

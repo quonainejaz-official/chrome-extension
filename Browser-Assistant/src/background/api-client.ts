@@ -2,6 +2,7 @@ import type { PageContext, Message, ResolvedModel } from '../shared/types';
 import {
   API_TIMEOUT,
   STREAM_IDLE_TIMEOUT,
+  MAX_REQUEST_TIME,
   MAX_RETRIES,
   RETRY_BASE_DELAY,
   MAX_RETRY_DELAY,
@@ -247,6 +248,10 @@ async function streamChat(
     // forever — clearing it as soon as the headers arrived left the body read
     // completely unbounded.
     let watchdog = setTimeout(() => controller.abort(), API_TIMEOUT);
+    // Reasoning models emit a steady drip of SSE keep-alive comments while they
+    // think, which re-arms the idle watchdog indefinitely. This ceiling is what
+    // actually bounds a request that is alive but going nowhere.
+    const overallDeadline = setTimeout(() => controller.abort(), MAX_REQUEST_TIME);
     const keepAlive = () => {
       clearTimeout(watchdog);
       watchdog = setTimeout(() => controller.abort(), STREAM_IDLE_TIMEOUT);
@@ -280,6 +285,19 @@ async function streamChat(
           // every attempt fell out of the loop and surfaced as the useless
           // "Request failed for an unknown reason."
           const detail = extractErrorMessage(429, errorBody);
+
+          // A spent free allowance is not a transient throttle. Waiting will
+          // not clear it, so retrying just burns the user's time — say so and
+          // stop.
+          if (/free.?usage|usage limit|quota (exceeded|exhausted)|daily limit/i.test(errorBody)) {
+            const quotaError = new Error(
+              `This model's free allowance is used up, so it will not answer again for now. Pick a different model in Settings — the free list has several. (${detail})`
+            );
+            (quotaError as any).fatal = true;
+            (quotaError as any).quotaExhausted = true;
+            throw quotaError;
+          }
+
           lastError = new Error(
             `Rate limited by the provider. Free models cap how fast requests can be sent — wait a moment, or switch to a different model in Settings. (${detail})`
           );
@@ -291,12 +309,16 @@ async function streamChat(
         }
 
         const message = extractErrorMessage(response.status, errorBody);
-        // OpenCode Zen returns billing/credits failures with a 401 status too,
-        // so classify by message content rather than trusting the status code.
+        // OpenCode Zen returns billing failures — and dead model ids — with a
+        // 401 too, so classify by message content rather than trusting the
+        // status code. Calling a retired model "Invalid API key" sent people
+        // hunting for a credentials problem that did not exist.
         const lower = message.toLowerCase();
         const isBillingIssue = /credit|payment|billing|quota|insufficient/.test(lower);
-        const friendly =
-          response.status === 401 && !isBillingIssue
+        const isModelIssue = /model .* (is )?not (supported|found|available)|unknown model|no such model/.test(lower);
+        const friendly = isModelIssue
+          ? `That model is no longer available from the provider. Choose another one in Settings. (${message})`
+          : response.status === 401 && !isBillingIssue
             ? `Invalid API key. ${message}`
             : message;
 
@@ -384,6 +406,7 @@ async function streamChat(
       await sleep(retryDelay(attempt));
     } finally {
       clearTimeout(watchdog);
+      clearTimeout(overallDeadline);
     }
   }
 

@@ -174,6 +174,48 @@ export interface ReadPageAction {
   type: 'readPage';
 }
 
+/**
+ * Reveal an element's surroundings without acting on it — the text of the row,
+ * card or panel it sits in. Lets the agent answer "what does this say" and
+ * "did that work" without a full page re-read.
+ */
+export interface InspectAction {
+  type: 'inspect';
+  ref: string;
+}
+
+/** Clear a field back to empty — distinct from filling it with "". */
+export interface ClearAction {
+  type: 'clear';
+  ref: string;
+}
+
+/**
+ * A keyboard chord: Ctrl+A, Meta+Enter, Shift+Tab. Many apps expose actions
+ * only through shortcuts, and Tab is how you move through a form the way a
+ * person does.
+ */
+export interface HotkeyAction {
+  type: 'hotkey';
+  key: string;
+  ctrl?: boolean;
+  meta?: boolean;
+  shift?: boolean;
+  alt?: boolean;
+  ref?: string;
+}
+
+/**
+ * Pull structured data off the page — table rows, list items, search results.
+ * The point of the agent is not only to fill things in but to get things out.
+ */
+export interface ExtractAction {
+  type: 'extract';
+  /** What to pull: "table", "list", or a description the executor matches. */
+  target?: string;
+  ref?: string;
+}
+
 export interface AskAction {
   type: 'ask';
   question: string;
@@ -198,6 +240,10 @@ export type AgentAction =
   | GoBackAction
   | WaitAction
   | ReadPageAction
+  | InspectAction
+  | ClearAction
+  | HotkeyAction
+  | ExtractAction
   | AskAction
   | DoneAction;
 
@@ -239,6 +285,10 @@ export function batchClass(action: AgentAction, element?: SnapshotElement): Batc
       return element && element.role !== 'select' ? 'terminal' : 'continue';
     case 'setCheckbox':
     case 'scrollToElement':
+    case 'clear':
+    // Read-only: they cannot change the page, so they never invalidate a ref.
+    case 'inspect':
+    case 'extract':
       return 'continue';
     default:
       return 'terminal';
@@ -361,6 +411,14 @@ export function describeAction(action: AgentAction, element?: SnapshotElement): 
       return action.text ? `Waited for “${truncate(action.text, 30)}”` : 'Waited for the page';
     case 'readPage':
       return 'Re-read the page';
+    case 'clear':
+      return `Cleared${on || ' a field'}`;
+    case 'inspect':
+      return `Looked at${on || ' an element'}`;
+    case 'hotkey':
+      return `Pressed ${[action.ctrl && 'Ctrl', action.meta && 'Meta', action.shift && 'Shift', action.alt && 'Alt', action.key].filter(Boolean).join('+')}`;
+    case 'extract':
+      return name ? `Read the data in ${name}` : 'Read the data on the page';
     case 'ask':
       return 'Asked you a question';
     case 'done':
