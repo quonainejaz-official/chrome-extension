@@ -4,7 +4,8 @@
 // page changes under you, and a small model that emits five actions at once
 // will happily aim the last four at elements that no longer exist.
 
-import { chatOnce, isRateLimitError, type ChatTurn } from './api-client';
+import { isRateLimitError, type ChatTurn } from './api-client';
+import { chatOnceWithFallback } from './model-router';
 import { snapshotTab, runAction, sleep } from './page-agent';
 import {
   batchClass,
@@ -19,7 +20,7 @@ import {
   type SnapshotElement,
 } from '../shared/actions';
 import { DEFAULT_MAX_AGENT_ACTIONS } from '../shared/constants';
-import type { Message, ResolvedModel, Settings, UserProfile } from '../shared/types';
+import type { AssistantMode, Message, ResolvedModel, Settings, UserProfile } from '../shared/types';
 
 const MAX_TRANSCRIPT_TURNS = 16;
 const MAX_PARSE_FAILURES = 3;
@@ -45,7 +46,8 @@ export interface AgentRunOptions {
   /** Prior chat turns, for context like "fill it with the address I mentioned". */
   history: Message[];
   settings: Settings;
-  model: ResolvedModel;
+  models: ResolvedModel[];
+  mode?: AssistantMode;
   emitStep: (step: AgentStep) => void;
   emitStatus: (kind: 'reading' | 'thinking' | 'waiting' | 'acting', text: string) => void;
   requestConfirmation: (request: ConfirmationRequest) => Promise<boolean>;
@@ -61,7 +63,8 @@ export interface AgentRunResult {
 // ── Main loop ───────────────────────────────────────────────────
 
 export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
-  const { runId, tabId, goal, settings, model } = opts;
+  const { runId, tabId, goal, settings, models, mode } = opts;
+  const developerMode = mode === 'developer' || isDeveloperGoal(goal);
   // Two independent budgets. A turn is one model round-trip; a turn can now
   // carry a whole batch of actions, so the old single counter would have
   // stopped a 12-field form less than halfway through.
@@ -70,7 +73,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
 
   const steps: AgentStep[] = [];
   const transcript: ChatTurn[] = [];
-  const system = buildSystemPrompt(settings.profile, goal);
+  const system = buildSystemPrompt(settings.profile, goal, developerMode);
   const goalTurn: ChatTurn = { role: 'user', content: buildGoalTurn(goal, opts.history) };
 
   let parseFailures = 0;
@@ -89,7 +92,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     let snapshot: PageSnapshot;
     let refMap: Map<string, { frameId: number; localRef: string }>;
     try {
-      const taken = await snapshotTab(tabId, { wantText: needsPageText });
+      const taken = await snapshotTab(tabId, { wantText: needsPageText, diagnostics: developerMode });
       snapshot = taken.snapshot;
       refMap = taken.refMap;
     } catch (err) {
@@ -111,7 +114,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
       { role: 'system', content: system },
       goalTurn,
       ...transcript.slice(-MAX_TRANSCRIPT_TURNS),
-      { role: 'user', content: renderSnapshot(snapshot, goal) },
+      { role: 'user', content: renderSnapshot(snapshot, goal, developerMode) },
     ];
 
     opts.emitStatus('thinking', turnIndex === 0 ? 'Working out what to do' : 'Deciding the next move');
@@ -120,7 +123,14 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     let modelError: unknown = null;
     for (let pause = 0; pause <= MAX_RATE_LIMIT_PAUSES; pause++) {
       try {
-        reply = await chatOnce(model, messages);
+        reply = await chatOnceWithFallback(models, messages, 0.1, {
+          onFallback: (failed, next) => {
+            opts.emitStatus(
+              'waiting',
+              `${failed.label ?? failed.model} unavailable — trying ${next.label ?? next.model}`
+            );
+          },
+        });
         modelError = null;
         break;
       } catch (err) {
@@ -610,10 +620,27 @@ function hostOf(url: string): string {
 
 // ── Prompt construction ─────────────────────────────────────────
 
-function buildSystemPrompt(profile: UserProfile | undefined, goal: string): string {
+function isDeveloperGoal(goal: string): boolean {
+  return /\b(debug|developer|qa|quality|test|testing|audit|smoke|reproduce|regression|accessibility|responsive|api)\b/i.test(goal);
+}
+
+function buildSystemPrompt(profile: UserProfile | undefined, goal: string, developerMode = false): string {
   const details = renderProfile(profile);
 
-  return `You are the hands of the user inside their Chrome browser. You do not just read pages — you operate them: clicking, typing, choosing from dropdowns, ticking boxes, scrolling, navigating and submitting, on the user's behalf.
+  const developerGuidance = developerMode
+    ? `
+
+# Developer debug / QA mode
+The user asked for a live debug, UI test, API-related check, QA audit, or regression check. Do not downgrade this to a text-only or read-only report by default.
+- Use the live DOM snapshot and LIVE DEBUG DIAGNOSTICS as evidence. Inspect computed layout signals, accessible names, missing image alt text, runtime errors, and failed fetch requests when present.
+- Safe, reversible inspection is allowed: scroll, hover, open tabs/menus, click non-consequential controls, press Escape, focus fields, re-read the page, inspect surrounding regions, and run validation with clearly synthetic values when the user asked to test.
+- Do not submit, send, publish, delete, pay, purchase, sign up, or otherwise change server-side state without the existing confirmation flow. If a check needs one of these, mark it BLOCKED and explain the exact confirmation needed.
+- Do not claim that a CSS, console, network, or accessibility check passed unless the live snapshot or action result proves it. Distinguish OBSERVED, PASSED, FAILED, and BLOCKED.
+- Finish with a compact QA report: scope, actions performed, evidence, failures, blocked checks, likely cause, and recommended fix/regression test.
+`
+    : '';
+
+  return `You are the hands of the user inside their Chrome browser. You do not just read pages — you operate them: clicking, typing, choosing from dropdowns, ticking boxes, scrolling, navigating and submitting, on the user's behalf.${developerGuidance}
 
 Forms are the common case, not the limit. You can also find and open things, work through a multi-step flow, read a table or a list back to the user, check what a page says after an action, drive an app by keyboard, dismiss overlays, compare two pages, and work out for yourself what steps a request needs. Take the request at face value and get it done; do not narrow it to "fill in fields".
 
@@ -739,7 +766,7 @@ function buildGoalTurn(goal: string, history: Message[]): string {
 
 // ── Snapshot rendering ──────────────────────────────────────────
 
-function renderSnapshot(snapshot: PageSnapshot, goal: string): string {
+function renderSnapshot(snapshot: PageSnapshot, goal: string, developerMode = false): string {
   const lines: string[] = [];
   const pct =
     snapshot.scrollHeight > snapshot.viewportHeight
@@ -791,6 +818,35 @@ function renderSnapshot(snapshot: PageSnapshot, goal: string): string {
   }
   if (snapshot.truncated) {
     lines.push('(list truncated — scroll or narrow the page to see more)');
+  }
+
+  if (developerMode && snapshot.diagnostics) {
+    const diagnostics = snapshot.diagnostics;
+    lines.push('');
+    lines.push('=== LIVE DEBUG DIAGNOSTICS ===');
+    lines.push(`Viewport: ${diagnostics.viewport.width}x${diagnostics.viewport.height} @${diagnostics.viewport.devicePixelRatio}x`);
+    lines.push(
+      `Layout: document ${diagnostics.layout.documentWidth}x${diagnostics.layout.documentHeight}; ` +
+        `horizontal overflow=${diagnostics.layout.horizontalOverflow ? 'YES' : 'NO'}; ` +
+        `body overflow-x=${diagnostics.layout.bodyOverflowX}; ` +
+        `fixed/sticky elements=${diagnostics.layout.fixedOrStickyCount}`
+    );
+    lines.push(
+      `Accessibility signals: unnamed interactive=${diagnostics.accessibility.interactiveWithoutName}; ` +
+        `images without alt=${diagnostics.accessibility.imagesWithoutAlt}; ` +
+        `headings=${diagnostics.accessibility.headings}; dialogs=${diagnostics.accessibility.dialogs}`
+    );
+    lines.push(
+      diagnostics.runtimeErrors.length > 0
+        ? 'Runtime errors observed:\n- ' + diagnostics.runtimeErrors.join('\n- ')
+        : 'Runtime errors observed: none captured by the extension diagnostics hook.'
+    );
+    lines.push(
+      diagnostics.failedRequests.length > 0
+        ? 'Failed requests observed:\n- ' + diagnostics.failedRequests.join('\n- ')
+        : 'Failed requests observed: none captured by the extension diagnostics hook.'
+    );
+    lines.push('These are live page signals, not proof of every browser/DevTools condition. Never invent missing status codes or console output.');
   }
 
   if (snapshot.text) {

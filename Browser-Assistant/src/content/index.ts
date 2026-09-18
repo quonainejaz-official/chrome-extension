@@ -3,6 +3,48 @@ import type { ToContentMessage, FromContentMessage, PageMetadata } from '../shar
 const MAX_CONTENT_LENGTH = 50000;
 const MAX_SELECTION_LENGTH = 5000;
 
+interface PageDiagnosticsStore {
+  runtimeErrors: string[];
+  failedRequests: string[];
+}
+
+function installDiagnosticsCapture(): void {
+  const page = window as Window & { __aipaDiagnostics?: PageDiagnosticsStore };
+  if (page.__aipaDiagnostics) return;
+
+  const store: PageDiagnosticsStore = { runtimeErrors: [], failedRequests: [] };
+  page.__aipaDiagnostics = store;
+  const add = (bucket: string[], value: string) => {
+    const clean = value.replace(/\s+/g, ' ').trim().slice(0, 400);
+    if (clean && !bucket.includes(clean)) bucket.push(clean);
+    if (bucket.length > 20) bucket.splice(0, bucket.length - 20);
+  };
+
+  window.addEventListener('error', (event) => {
+    const detail = event.error instanceof Error ? event.error.message : event.message;
+    add(store.runtimeErrors, detail || 'Unhandled window error');
+  });
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason = event.reason instanceof Error ? event.reason.message : String(event.reason ?? 'Unknown rejection');
+    add(store.runtimeErrors, 'Unhandled promise rejection: ' + reason);
+  });
+
+  const originalFetch = window.fetch;
+  window.fetch = async (...args) => {
+    const requestUrl = typeof args[0] === 'string' ? args[0] : args[0] instanceof Request ? args[0].url : String(args[0]);
+    try {
+      const response = await originalFetch(...args);
+      if (!response.ok) add(store.failedRequests, `${response.status} ${requestUrl}`);
+      return response;
+    } catch (error) {
+      add(store.failedRequests, `Network failure ${requestUrl}: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }
+  };
+}
+
+installDiagnosticsCapture();
+
 // ── Content Extraction ──────────────────────────────────────────
 
 function extractTextContent(): string {

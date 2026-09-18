@@ -59,6 +59,15 @@ An AI assistant embedded in Chrome that understands the current page and helps u
 - Supports complex multi-step requests
 - Template prompts for common tasks
 
+### 3.8 Developer / QA Mode
+- Dedicated mode for debugging and quality workflows
+- Inspect visible UI behavior with safe, non-destructive smoke tests
+- Create API test plans and request examples from visible endpoint/spec context
+- Generate structured QA test cases, including negative and boundary coverage
+- Produce implementation-ready test code or patches when source/spec context is available
+- Clearly separate observed evidence, assumptions, and blocked checks
+- Never claim local files were edited, tests were run, or network/console results were observed without the required access
+
 ## 4. User Experience Requirements
 
 ### 4.1 Responsive Design

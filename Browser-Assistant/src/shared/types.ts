@@ -2,12 +2,15 @@ import type { AgentAction, AgentStep } from './actions';
 
 // ── Side Panel → Background ──────────────────────────────────────
 
+export type AssistantMode = 'general' | 'developer';
+
 export interface SendMessageRequest {
   type: 'SEND_MESSAGE';
   payload: {
     content: string;
     conversationId?: string;
     includePageContext: boolean;
+    mode?: AssistantMode;
   };
 }
 
@@ -27,6 +30,16 @@ export interface GetConversationRequest {
 export interface DeleteConversationRequest {
   type: 'DELETE_CONVERSATION';
   payload: { id: string };
+}
+
+export interface RestoreConversationRequest {
+  type: 'RESTORE_CONVERSATION';
+  payload: { conversation: Conversation };
+}
+
+export interface TestModelConnectionRequest {
+  type: 'TEST_MODEL_CONNECTION';
+  payload: { model: CustomModel };
 }
 
 export interface SaveSettingsRequest {
@@ -117,6 +130,16 @@ export interface PanelToggledResponse {
   type: 'PANEL_TOGGLED';
 }
 
+export interface RequestAcceptedResponse {
+  type: 'REQUEST_ACCEPTED';
+  payload: { conversationId: string };
+}
+
+export interface ModelConnectionResponse {
+  type: 'MODEL_CONNECTION_RESULT';
+  payload: { ok: boolean; message: string };
+}
+
 /** Broadcast as each agent step starts and finishes. */
 export interface AgentStepEvent {
   type: 'AGENT_STEP';
@@ -205,6 +228,8 @@ export type ToBackgroundMessage =
   | GetConversationsRequest
   | GetConversationRequest
   | DeleteConversationRequest
+  | RestoreConversationRequest
+  | TestModelConnectionRequest
   | SaveSettingsRequest
   | GetSettingsRequest
   | TogglePanelRequest
@@ -214,6 +239,7 @@ export type ToBackgroundMessage =
 
 export type FromBackgroundMessage =
   | AIResponseChunk
+  | RequestAcceptedResponse
   | PageContextResponse
   | ConversationsResponse
   | ConversationResponse
@@ -221,6 +247,7 @@ export type FromBackgroundMessage =
   | SettingsSavedResponse
   | ErrorResponse
   | PanelToggledResponse
+  | ModelConnectionResponse
   | AgentStepEvent
   | AgentStatusEvent
   | AgentConfirmRequestEvent
@@ -235,6 +262,7 @@ export type FromContentMessage = ContentExtractedResponse | SelectionCapturedRes
 export interface PageContext {
   url: string;
   title: string;
+  faviconUrl?: string;
   content: string;
   selectedText?: string;
   language: string;
@@ -354,6 +382,8 @@ export interface ResolvedModel {
   endpoint: string;
   model: string;
   apiKey: string;
+  provider?: 'zenmux' | 'opencode' | 'custom';
+  label?: string;
 }
 
 export interface Settings {

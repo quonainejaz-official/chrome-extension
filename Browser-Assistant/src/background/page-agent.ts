@@ -2,8 +2,8 @@
 // remapping and everything that has to happen at the tab level (navigation,
 // waiting for loads).
 
-import { snapshotInPage, actInPage, hasTextInPage } from './dom-agent';
-import type { PageSnapshot, AgentAction, ActionResult, SnapshotElement } from '../shared/actions';
+import { snapshotInPage, collectRuntimeDiagnostics, actInPage, hasTextInPage } from './dom-agent';
+import type { PageDiagnostics, PageSnapshot, AgentAction, ActionResult, SnapshotElement } from '../shared/actions';
 
 const MAX_ELEMENTS = 220;
 const MAX_SNAPSHOT_TEXT = 6000;
@@ -33,23 +33,39 @@ export function sleep(ms: number): Promise<void> {
  */
 export async function snapshotTab(
   tabId: number,
-  opts: { wantText?: boolean } = {}
+  opts: { wantText?: boolean; diagnostics?: boolean } = {}
 ): Promise<TabSnapshot> {
   const wantText = opts.wantText !== false;
+  const diagnostics = opts.diagnostics === true;
+  let runtimeDiagnostics: { runtimeErrors: string[]; failedRequests: string[] } | undefined;
+
+  if (diagnostics) {
+    try {
+      const [result] = await chrome.scripting.executeScript({
+        target: { tabId, frameIds: [0] },
+        world: 'MAIN',
+        func: collectRuntimeDiagnostics,
+      });
+      runtimeDiagnostics = result?.result as typeof runtimeDiagnostics;
+    } catch {
+      // Some restricted pages do not allow MAIN-world diagnostics. The DOM
+      // audit still runs and reports the missing runtime layer as unavailable.
+    }
+  }
   let results: chrome.scripting.InjectionResult<Awaited<ReturnType<typeof snapshotInPage>>>[] = [];
 
   try {
     results = (await chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
       func: snapshotInPage,
-      args: [MAX_ELEMENTS, MAX_SNAPSHOT_TEXT, wantText],
+      args: [MAX_ELEMENTS, MAX_SNAPSHOT_TEXT, wantText, diagnostics],
     })) as typeof results;
   } catch {
     // allFrames can fail outright on some pages; fall back to the main frame.
     results = (await chrome.scripting.executeScript({
       target: { tabId, frameIds: [0] },
       func: snapshotInPage,
-      args: [MAX_ELEMENTS, MAX_SNAPSHOT_TEXT, wantText],
+      args: [MAX_ELEMENTS, MAX_SNAPSHOT_TEXT, wantText, diagnostics],
     })) as typeof results;
   }
 
@@ -110,6 +126,14 @@ export async function snapshotTab(
     .map((r) => r.result!.text)
     .filter((t) => t && t.trim().length > 40);
 
+  const snapshotDiagnostics = diagnostics && main.diagnostics
+    ? {
+        ...main.diagnostics,
+        runtimeErrors: runtimeDiagnostics?.runtimeErrors ?? main.diagnostics.runtimeErrors,
+        failedRequests: runtimeDiagnostics?.failedRequests ?? main.diagnostics.failedRequests,
+      } satisfies PageDiagnostics
+    : undefined;
+
   const snapshot: PageSnapshot = {
     url: main.url,
     title: main.title,
@@ -121,6 +145,7 @@ export async function snapshotTab(
     viewportHeight: main.viewportHeight,
     truncated,
     frameCount: usable.length,
+    diagnostics: snapshotDiagnostics,
   };
 
   return { snapshot, refMap };

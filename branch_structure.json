@@ -1,0 +1,15 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "feat/agent-mode-page-actions",
+    "main"
+  ],
+  "parent": {
+    "feat/agent-mode-page-actions": "main",
+    "main": null
+  },
+  "order": [
+    "main",
+    "feat/agent-mode-page-actions"
+  ]
+}

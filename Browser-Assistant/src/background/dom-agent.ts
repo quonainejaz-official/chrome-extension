@@ -19,7 +19,8 @@ import type { PageSnapshot, AgentAction, ActionResult } from '../shared/actions'
 export function snapshotInPage(
   maxElements: number,
   maxText: number,
-  wantText: boolean
+  wantText: boolean,
+  includeDiagnostics = false
 ): Omit<PageSnapshot, 'frameCount'> {
   const REF = 'data-aipa-ref';
   const FORM_REF = 'data-aipa-form';
@@ -580,6 +581,53 @@ export function snapshotInPage(
     if (!text) text = (document.body && document.body.innerText) || '';
   }
 
+  let diagnostics: PageSnapshot['diagnostics'];
+  if (includeDiagnostics) {
+    const all = Array.from(document.querySelectorAll('*'));
+    const interactiveRoles = new Set(['button', 'link', 'textbox', 'checkbox', 'radio', 'select', 'combobox', 'tab', 'menuitem', 'switch']);
+    let interactiveWithoutName = 0;
+    let imagesWithoutAlt = 0;
+    let fixedOrStickyCount = 0;
+
+    for (const node of all) {
+      if (!(node instanceof HTMLElement) || !isVisible(node)) continue;
+      const tag = node.tagName.toLowerCase();
+      const role = roleOf(node);
+      if ((interactiveRoles.has(role) || node.hasAttribute('onclick')) && !accessibleName(node)) {
+        interactiveWithoutName++;
+      }
+      if (tag === 'img' && !node.hasAttribute('alt')) imagesWithoutAlt++;
+      const position = window.getComputedStyle(node).position;
+      if (position === 'fixed' || position === 'sticky') fixedOrStickyCount++;
+    }
+
+    const root = document.documentElement;
+    const bodyStyle = document.body ? window.getComputedStyle(document.body) : null;
+    const stored = (window as unknown as { __aipaDiagnostics?: { runtimeErrors?: string[]; failedRequests?: string[] } }).__aipaDiagnostics;
+    diagnostics = {
+      viewport: {
+        width: Math.round(window.innerWidth),
+        height: Math.round(window.innerHeight),
+        devicePixelRatio: window.devicePixelRatio || 1,
+      },
+      layout: {
+        documentWidth: Math.round(root.scrollWidth),
+        documentHeight: Math.round(root.scrollHeight),
+        horizontalOverflow: root.scrollWidth > root.clientWidth + 1,
+        bodyOverflowX: bodyStyle?.overflowX || 'unknown',
+        fixedOrStickyCount,
+      },
+      accessibility: {
+        interactiveWithoutName,
+        imagesWithoutAlt,
+        headings: document.querySelectorAll('h1,h2,h3,h4,h5,h6').length,
+        dialogs: document.querySelectorAll('[role="dialog"],dialog').length,
+      },
+      runtimeErrors: (stored?.runtimeErrors || []).slice(-20),
+      failedRequests: (stored?.failedRequests || []).slice(-20),
+    };
+  }
+
   return {
     url: window.location.href,
     title: document.title || 'Untitled',
@@ -590,7 +638,61 @@ export function snapshotInPage(
     scrollHeight: Math.round(document.documentElement.scrollHeight),
     viewportHeight: Math.round(viewportHeight),
     truncated,
+    diagnostics,
   };
+}
+
+/**
+ * Installs/reads the runtime diagnostics hook in the page's MAIN world. This
+ * is deliberately separate from snapshotInPage because a content script's
+ * isolated world cannot reliably observe the page application's fetch calls.
+ */
+export function collectRuntimeDiagnostics(): { runtimeErrors: string[]; failedRequests: string[] } {
+  const page = window as Window & {
+    __aipaDiagnostics?: { runtimeErrors: string[]; failedRequests: string[] };
+  };
+  const existing = page.__aipaDiagnostics;
+  if (existing) {
+    return {
+      runtimeErrors: existing.runtimeErrors.slice(-20),
+      failedRequests: existing.failedRequests.slice(-20),
+    };
+  }
+
+  const store = { runtimeErrors: [] as string[], failedRequests: [] as string[] };
+  page.__aipaDiagnostics = store;
+  const add = (bucket: string[], value: string) => {
+    const clean = value.replace(/\s+/g, ' ').trim().slice(0, 400);
+    if (clean && !bucket.includes(clean)) bucket.push(clean);
+    if (bucket.length > 20) bucket.splice(0, bucket.length - 20);
+  };
+  window.addEventListener('error', (event) => {
+    const detail = event.error instanceof Error ? event.error.message : event.message;
+    add(store.runtimeErrors, detail || 'Unhandled window error');
+  });
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason = event.reason instanceof Error ? event.reason.message : String(event.reason ?? 'Unknown rejection');
+    add(store.runtimeErrors, 'Unhandled promise rejection: ' + reason);
+  });
+  const originalConsoleError = console.error.bind(console);
+  console.error = (...args: unknown[]) => {
+    add(store.runtimeErrors, args.map((value) => value instanceof Error ? value.message : String(value)).join(' '));
+    originalConsoleError(...args);
+  };
+  const originalFetch = window.fetch;
+  window.fetch = async (...args) => {
+    const requestUrl = typeof args[0] === 'string' ? args[0] : args[0] instanceof Request ? args[0].url : String(args[0]);
+    try {
+      const response = await originalFetch(...args);
+      if (!response.ok) add(store.failedRequests, `${response.status} ${requestUrl}`);
+      return response;
+    } catch (error) {
+      add(store.failedRequests, `Network failure ${requestUrl}: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }
+  };
+
+  return { runtimeErrors: [], failedRequests: [] };
 }
 
 // ── Action execution ────────────────────────────────────────────

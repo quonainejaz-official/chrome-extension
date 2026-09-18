@@ -8,6 +8,7 @@ describe('PROMPT_TEMPLATES', () => {
     expect(categories.has('translation')).toBe(true);
     expect(categories.has('summarization')).toBe(true);
     expect(categories.has('analysis')).toBe(true);
+    expect(categories.has('developer')).toBe(true);
   });
 
   it('each template has required fields', () => {
@@ -34,6 +35,16 @@ describe('PROMPT_TEMPLATES', () => {
   it('has at least 5 translation templates', () => {
     const translations = getTemplatesByCategory('translation');
     expect(translations.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('has developer workflows for UI, API, QA, and implementation', () => {
+    const developer = getTemplatesByCategory('developer');
+    expect(developer.map((template) => template.id)).toEqual(expect.arrayContaining([
+      'developer-ui-audit',
+      'developer-api-plan',
+      'developer-qa-cases',
+      'developer-implement-tests',
+    ]));
   });
 });
 

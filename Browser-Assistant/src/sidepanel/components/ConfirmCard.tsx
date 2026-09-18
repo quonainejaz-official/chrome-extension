@@ -35,14 +35,14 @@ export function ConfirmCard({ request, onDecide }: Props) {
       <div className="flex gap-2">
         <button
           onClick={() => onDecide(true)}
-          className="flex-1 py-1.5 rounded-lg text-sm font-medium text-white transition-opacity hover:opacity-90"
+          className="flex-1 py-1.5 rounded-lg text-sm font-medium text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           style={{ background: 'var(--accent)' }}
         >
           Yes, do it
         </button>
         <button
           onClick={() => onDecide(false)}
-          className="flex-1 py-1.5 rounded-lg text-sm font-medium border transition-colors border-[var(--border-color)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]"
+          className="flex-1 py-1.5 rounded-lg text-sm font-medium border transition-colors border-[var(--border-color)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           Stop
         </button>
