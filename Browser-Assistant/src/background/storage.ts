@@ -3,6 +3,7 @@ import { EMPTY_PROFILE } from '../shared/types';
 import {
   MAX_CONVERSATIONS,
   DEFAULT_MODEL_ID,
+  ZENMUX_AUTO_MODEL_ID,
   DEFAULT_MAX_AGENT_STEPS,
   DEFAULT_MAX_AGENT_ACTIONS,
 } from '../shared/constants';
@@ -10,7 +11,7 @@ import {
 const DEFAULT_SETTINGS: Settings = {
   apiKey: '',
   apiKeyConfigured: false,
-  selectedModel: DEFAULT_MODEL_ID,
+  selectedModel: ZENMUX_AUTO_MODEL_ID,
   customModels: [],
   defaultLanguage: 'en',
   summaryLength: 'standard',
@@ -30,9 +31,15 @@ const DEFAULT_SETTINGS: Settings = {
 export async function getSettings(): Promise<Settings> {
   const result = await chrome.storage.local.get('settings');
   const stored = (result.settings ?? {}) as Partial<Settings>;
+  const selectedModel =
+    !stored.selectedModel || stored.selectedModel === DEFAULT_MODEL_ID
+      ? ZENMUX_AUTO_MODEL_ID
+      : stored.selectedModel;
+
   return {
     ...DEFAULT_SETTINGS,
     ...stored,
+    selectedModel,
     // Profile is nested, so a shallow merge would drop fields added in a later
     // version for anyone who saved settings before the upgrade.
     profile: { ...EMPTY_PROFILE, ...(stored.profile ?? {}) },

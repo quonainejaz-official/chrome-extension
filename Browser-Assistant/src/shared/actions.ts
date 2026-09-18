@@ -96,6 +96,27 @@ export interface PageSnapshot {
   truncated: boolean;
   /** Number of same-origin iframes that were also scanned. */
   frameCount: number;
+  /** Live DOM/runtime diagnostics collected for Developer QA runs. */
+  diagnostics?: PageDiagnostics;
+}
+
+export interface PageDiagnostics {
+  viewport: { width: number; height: number; devicePixelRatio: number };
+  layout: {
+    documentWidth: number;
+    documentHeight: number;
+    horizontalOverflow: boolean;
+    bodyOverflowX: string;
+    fixedOrStickyCount: number;
+  };
+  accessibility: {
+    interactiveWithoutName: number;
+    imagesWithoutAlt: number;
+    headings: number;
+    dialogs: number;
+  };
+  runtimeErrors: string[];
+  failedRequests: string[];
 }
 
 // ── Actions ─────────────────────────────────────────────────────

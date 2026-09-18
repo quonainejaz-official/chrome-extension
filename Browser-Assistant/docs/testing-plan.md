@@ -145,6 +145,16 @@ describe('Conversation Flow', () => {
 
 ## 4. Manual Testing Checklist
 
+### 4.0 Developer / QA Mode
+
+- [ ] Developer QA mode can be entered and exited without losing the chat draft
+- [ ] Developer mode is visibly identified in the header and composer
+- [ ] UI audit starter generates evidence-based checks and marks inaccessible checks as blocked
+- [ ] API test-plan starter distinguishes an available endpoint/spec from missing context
+- [ ] QA test-case starter includes IDs, preconditions, steps, expected results, priority, and negative/boundary cases
+- [ ] Implement-tests starter does not claim local files were changed when repository access is unavailable
+- [ ] Existing general chat, agent confirmation, reading focus, and conversation drawer remain functional after mode changes
+
 ### 4.1 Extension Basics
 
 - [ ] Extension loads without errors

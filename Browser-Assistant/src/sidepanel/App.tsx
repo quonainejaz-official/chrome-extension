@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import type { AssistantMode } from '../shared/types';
 import { useSettings, useConversations, useChat, usePageContext, useTheme } from './hooks/useHooks';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { SettingsPanel } from './components/SettingsPanel';
@@ -13,6 +14,7 @@ export default function App() {
     sessionKey,
     selectConversation,
     deleteConversation,
+    restoreConversation,
     newConversation,
   } = useConversations();
   const {
@@ -37,6 +39,7 @@ export default function App() {
 
   const [showSettings, setShowSettings] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [assistantMode, setAssistantMode] = useState<AssistantMode>('general');
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const toggleTheme = () => updateSettings({ theme: isDark ? 'light' : 'dark' });
@@ -87,6 +90,8 @@ export default function App() {
         isLoading={isLoading}
         error={error}
         onSend={sendMessage}
+        mode={assistantMode}
+        onModeChange={setAssistantMode}
         pageContext={pageContext}
         onRefreshContext={refreshContext}
         isDark={isDark}
@@ -127,6 +132,7 @@ export default function App() {
             setSidebarOpen(false);
           }}
           onDelete={deleteConversation}
+          onRestore={restoreConversation}
           onNew={() => {
             newConversation();
             setSidebarOpen(false);

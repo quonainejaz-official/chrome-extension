@@ -2,6 +2,28 @@
 // OpenAI-compatible endpoint. The client appends `/chat/completions`.
 export const OPENCODE_ZEN_BASE_URL = 'https://opencode.ai/zen/v1';
 
+// ── ZenMux (automatic provider) ─────────────────────────────────
+// ZenMux is the default provider. Candidates are tried in the order shown
+// below; the order mirrors the availability signal supplied for the current
+// free models, with the healthiest model first.
+export const ZENMUX_BASE_URL = 'https://zenmux.ai/api/v1';
+export const ZENMUX_AUTO_MODEL_ID = 'zenmux:auto';
+export const DEFAULT_ZENMUX_API_KEY: string =
+  (import.meta as any).env?.VITE_ZENMUX_API_KEY ?? '';
+
+export interface ZenMuxPriorityModel {
+  id: string;
+  label: string;
+  availability: number;
+}
+
+export const ZENMUX_PRIORITY_MODELS: ZenMuxPriorityModel[] = [
+  { id: 'atria-asi/atria-dawn-preview', label: 'Atria Dawn Preview', availability: 98.3 },
+  { id: 'dots-studio/dots3-note-preview', label: 'Dots3 Note Preview', availability: 97.17 },
+  { id: 'inclusionai/ling-3.0-tiny', label: 'Ling 3.0 Tiny', availability: 66.67 },
+  { id: 'inclusionai/ling-3.0-flash-vl', label: 'Ling 3.0 Flash VL', availability: 42.25 },
+];
+
 // Default API key baked in at build time from .env (VITE_OPENCODE_ZEN_KEY).
 // Users can override this in Settings, or add fully custom providers.
 export const DEFAULT_OPENCODE_ZEN_KEY: string =

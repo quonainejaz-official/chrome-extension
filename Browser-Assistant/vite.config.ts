@@ -7,8 +7,19 @@ import manifest from './manifest.json';
 export default defineConfig({
   plugins: [
     react(),
-    crx({ manifest }),
+    crx({
+      manifest,
+      // Keep CRXJS HMR/live reload enabled for extension development.
+      liveReload: true,
+    }),
   ],
+  server: {
+    // CRXJS service-worker loaders point at this origin in dev mode.
+    // Keeping it stable prevents a stale loader from targeting another port.
+    host: 'localhost',
+    port: 5173,
+    strictPort: true,
+  },
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),

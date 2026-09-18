@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type {
+  AssistantMode,
   Conversation,
   Message,
   Settings,
@@ -68,6 +69,14 @@ export function useConversations() {
     setActiveId((prev) => (prev === id ? null : prev));
   }, []);
 
+  const restoreConversation = useCallback(async (conversation: Conversation) => {
+    await sendMessageToBackground({ type: 'RESTORE_CONVERSATION', payload: { conversation } });
+    setConversations((prev) => {
+      const withoutRestored = prev.filter((item) => item.id !== conversation.id);
+      return [conversation, ...withoutRestored].sort((a, b) => b.updatedAt - a.updatedAt);
+    });
+  }, []);
+
   const newConversation = useCallback(() => {
     setActiveId(null);
     setSessionKey((n) => n + 1);
@@ -93,6 +102,7 @@ export function useConversations() {
     sessionKey,
     selectConversation,
     deleteConversation,
+    restoreConversation,
     newConversation,
     refresh: loadConversations,
   };
@@ -151,7 +161,26 @@ export function useChat(
   // Live agent events: step updates and confirmation prompts.
   useEffect(() => {
     const handler = (message: FromBackgroundMessage) => {
-      if (message.type === 'AGENT_STEP') {
+      if (message.type === 'AI_RESPONSE_CHUNK') {
+        // The background streams cumulative content. Replace the same
+        // assistant message in place instead of appending one bubble per
+        // token.
+        if (!streamingRef.current) return;
+        const incoming = message.payload;
+        setMessages((prev) => {
+          const assistant: Message = {
+            id: incoming.messageId,
+            role: 'assistant',
+            content: incoming.content,
+            timestamp: Date.now(),
+          };
+          const index = prev.findIndex((item) => item.id === incoming.messageId);
+          if (index < 0) return [...prev, assistant];
+          const next = prev.slice();
+          next[index] = { ...next[index], ...assistant };
+          return next;
+        });
+      } else if (message.type === 'AGENT_STEP') {
         const incoming = message.payload.step;
         // A chat message can turn into an agent run without the panel asking
         // for one, so the arrival of steps is what marks a run as live.
@@ -168,6 +197,28 @@ export function useChat(
         setStatus(message.payload);
       } else if (message.type === 'AGENT_CONFIRM_REQUEST') {
         setConfirmation(message.payload);
+      } else if (message.type === 'AGENT_FINISHED') {
+        if (!streamingRef.current) return;
+        setMessages((prev) => {
+          const assistant: Message = {
+            id: message.payload.messageId,
+            role: 'assistant',
+            content: message.payload.content,
+            timestamp: Date.now(),
+            metadata: { agent: true, steps: message.payload.steps },
+          };
+          const index = prev.findIndex((item) => item.id === assistant.id);
+          if (index < 0) return [...prev, assistant];
+          const next = prev.slice();
+          next[index] = assistant;
+          return next;
+        });
+        setLiveSteps([]);
+        setIsLoading(false);
+        setIsAgentRunning(false);
+        setStatus(null);
+        setConfirmation(null);
+        streamingRef.current = false;
       }
     };
     chrome.runtime.onMessage.addListener(handler);
@@ -193,7 +244,7 @@ export function useChat(
   }, []);
 
   const sendMessage = useCallback(
-    async (content: string, includePageContext: boolean = true) => {
+    async (content: string, includePageContext: boolean = true, mode: AssistantMode = 'general') => {
       if (!content.trim() || streamingRef.current) return;
 
       streamingRef.current = true;
@@ -214,19 +265,19 @@ export function useChat(
 
       const appendAssistant = (assistantMsg: Message) => {
         setMessages((prev) => {
-          // Drop the optimistic user message when a fresh conversation was
-          // created, so it is not duplicated by the stored copy.
-          const filtered = conversationId ? prev : prev.filter((m) => m.id !== userMsg.id);
-          return [...filtered, userMsg, assistantMsg];
+          const index = prev.findIndex((item) => item.id === assistantMsg.id);
+          if (index < 0) return [...prev, assistantMsg];
+          const next = prev.slice();
+          next[index] = assistantMsg;
+          return next;
         });
       };
 
+      let awaitingBackgroundCompletion = false;
       try {
-        // One entry point. The model decides from the message itself whether
-        // to answer or to start acting on the page, so there is no mode to set.
         const response = await sendMessageToBackground({
           type: 'SEND_MESSAGE',
-          payload: { content: content.trim(), conversationId: conversationId ?? undefined, includePageContext },
+          payload: { content: content.trim(), conversationId: conversationId ?? undefined, includePageContext, mode },
         });
 
         if (response.type === 'AGENT_FINISHED') {
@@ -239,6 +290,10 @@ export function useChat(
           });
           setLiveSteps([]);
           if (!conversationId) onConversationCreated?.(response.payload.conversationId);
+        } else if (response.type === 'REQUEST_ACCEPTED') {
+          // Guard the rare case where a very fast agent finishes before the
+          // acknowledgement reaches the panel.
+          awaitingBackgroundCompletion = streamingRef.current;
         } else if (response.type === 'AI_RESPONSE_CHUNK') {
           appendAssistant({
             id: response.payload.messageId,
@@ -253,11 +308,15 @@ export function useChat(
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to send message');
       } finally {
-        setIsLoading(false);
-        setIsAgentRunning(false);
-        setStatus(null);
-        setConfirmation(null);
-        streamingRef.current = false;
+        // The agent acknowledgement is deliberately non-terminal. The
+        // AGENT_FINISHED broadcast owns cleanup once the long run completes.
+        if (!awaitingBackgroundCompletion) {
+          setIsLoading(false);
+          setIsAgentRunning(false);
+          setStatus(null);
+          setConfirmation(null);
+          streamingRef.current = false;
+        }
       }
     },
     [conversationId, onConversationCreated]
