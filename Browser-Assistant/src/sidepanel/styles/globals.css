@@ -3,45 +3,59 @@
 @tailwind utilities;
 
 :root {
-  /* Light theme — clean, neutral, enterprise */
-  --bg-primary: #ffffff;
-  --bg-secondary: #f9fafb;
-  --bg-tertiary: #f0f1f3;
+  /* Light theme — crisp surfaces with a saturated blue primary. */
+  color-scheme: light;
+  --bg-primary: #f3f6fb;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #e7edf7;
   --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --text-muted: #94a3b8;
-  --border-color: #e5e7eb;
+  --text-secondary: #3f506a;
+  --text-muted: #60738e;
+  --border-color: #cbd8ea;
   --accent: #2563eb;
   --accent-hover: #1d4ed8;
-  --accent-soft: #eff4ff;
+  --accent-soft: #e8f0ff;
+  --accent-secondary: #7c3aed;
+  --accent-glow: rgba(37, 99, 235, 0.2);
+  --accent-contrast: #ffffff;
+  --composer-bg: #ffffff;
+  --composer-border: #c7d5e8;
   --user-bubble: #2563eb;
   --user-text: #ffffff;
-  --ai-bubble: #f0f1f3;
+  --ai-bubble: #ffffff;
   --ai-text: #0f172a;
   --error: #dc2626;
   --success: #16a34a;
   --warning: #d97706;
+  --panel-shadow: 0 12px 36px rgba(25, 54, 102, 0.12);
 }
 
 .dark {
-  /* Dark theme — deep neutral slate, low glare */
-  --bg-primary: #0b0f17;
-  --bg-secondary: #111725;
-  --bg-tertiary: #1c2333;
-  --text-primary: #f1f5f9;
-  --text-secondary: #cbd5e1;
-  --text-muted: #64748b;
-  --border-color: #1e2637;
-  --accent: #3b82f6;
-  --accent-hover: #60a5fa;
-  --accent-soft: #172234;
-  --user-bubble: #2563eb;
+  /* Dark theme — deep navy graphite with a vivid cyan-blue action color. */
+  color-scheme: dark;
+  --bg-primary: #080e1a;
+  --bg-secondary: #101a2b;
+  --bg-tertiary: #192a43;
+  --text-primary: #f7fbff;
+  --text-secondary: #c2d0e3;
+  --text-muted: #91a5c0;
+  --border-color: #2c4260;
+  --accent: #38bdf8;
+  --accent-hover: #7dd3fc;
+  --accent-soft: #0d3556;
+  --accent-secondary: #a78bfa;
+  --accent-glow: rgba(56, 189, 248, 0.24);
+  --accent-contrast: #ffffff;
+  --composer-bg: #101a2b;
+  --composer-border: #385170;
+  --user-bubble: #155eaa;
   --user-text: #ffffff;
-  --ai-bubble: #1c2333;
-  --ai-text: #f1f5f9;
+  --ai-bubble: #171b26;
+  --ai-text: #f5f5f5;
   --error: #f87171;
   --success: #4ade80;
   --warning: #fbbf24;
+  --panel-shadow: 0 12px 36px rgba(0, 0, 0, 0.38);
 }
 
 * {
@@ -63,6 +77,286 @@ body {
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+.sidepanel-chat {
+  background:
+    radial-gradient(circle at 94% 2%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 30%),
+    var(--bg-primary);
+}
+
+.panel-topbar {
+  min-height: 52px;
+  background: color-mix(in srgb, var(--bg-primary) 88%, transparent);
+  backdrop-filter: blur(14px);
+}
+
+.brand-mark {
+  background: linear-gradient(145deg, var(--accent), var(--accent-secondary));
+  box-shadow: 0 5px 14px var(--accent-glow);
+}
+
+.page-context-card {
+  margin: 8px 10px 0;
+  padding: 9px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
+  box-shadow: 0 3px 12px color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.page-context-card .panel-page-context-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--accent-soft);
+}
+
+.page-context-card .page-context-status {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 14%, transparent);
+}
+
+.chat-messages {
+  scrollbar-gutter: stable;
+}
+
+.empty-state {
+  padding: 22px 8px 12px;
+}
+
+.empty-state-panel {
+  width: min(100%, 350px);
+  padding: 24px 18px 18px;
+  border: 1px solid color-mix(in srgb, var(--accent) 17%, var(--border-color));
+  border-radius: 24px;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent-soft) 52%, var(--bg-secondary)), var(--bg-secondary));
+  box-shadow: var(--panel-shadow);
+}
+
+.empty-state-mark {
+  background: linear-gradient(145deg, var(--accent), var(--accent-secondary)) !important;
+  color: white;
+  box-shadow: 0 8px 20px var(--accent-glow);
+}
+
+.empty-state-kicker {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.starter-button {
+  min-height: 42px;
+  border-color: color-mix(in srgb, var(--accent) 16%, var(--border-color));
+  background: color-mix(in srgb, var(--bg-secondary) 86%, transparent);
+}
+
+.starter-button:hover {
+  background: var(--bg-secondary);
+  box-shadow: 0 4px 12px var(--accent-glow);
+  transform: translateY(-1px);
+}
+
+.message-bubble {
+  box-shadow: 0 3px 12px color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.composer-footer {
+  padding: 10px;
+  background: color-mix(in srgb, var(--bg-primary) 90%, transparent);
+  backdrop-filter: blur(14px);
+}
+
+.focus-restore-bar {
+  background: color-mix(in srgb, var(--bg-primary) 92%, transparent);
+  backdrop-filter: blur(14px);
+}
+
+.composer-shell {
+  border-radius: 18px;
+  background: var(--composer-bg);
+  border-color: var(--composer-border);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.composer-shell:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow), 0 8px 24px color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.quick-actions {
+  mask-image: linear-gradient(to right, transparent 0, black 8px, black calc(100% - 8px), transparent 100%);
+  padding-inline: 8px;
+}
+
+.quick-actions button {
+  min-height: 28px;
+  background: color-mix(in srgb, var(--bg-secondary) 74%, transparent);
+}
+
+.quick-actions button:not(:disabled):hover {
+  background: var(--accent-soft);
+}
+
+.template-picker-menu {
+  width: min(16rem, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  box-shadow: var(--panel-shadow);
+  backdrop-filter: blur(14px);
+}
+
+.conversation-drawer {
+  background:
+    radial-gradient(circle at 0 0, color-mix(in srgb, var(--accent) 10%, transparent), transparent 36%),
+    var(--bg-secondary);
+}
+
+.conversation-header {
+  background: color-mix(in srgb, var(--bg-secondary) 84%, transparent);
+  backdrop-filter: blur(14px);
+}
+
+/* Composer focus treatment stays legible in both themes without turning the
+   whole input into a harsh blue block. */
+.composer-shell {
+  border-radius: 18px;
+  border-color: var(--composer-border);
+  background: var(--composer-bg);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.composer-shell:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow), 0 8px 24px color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.composer-textarea,
+.composer-textarea:focus {
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+  appearance: none;
+}
+
+/* The Chrome side panel commonly opens around 360–400px wide and can be
+   shorter than a normal web viewport. Keep the same controls and hit targets,
+   but remove decorative spacing so the empty state and composer fit together. */
+@media (max-width: 400px) {
+  .panel-topbar {
+    padding-block: 5px;
+  }
+
+  .panel-icon-button {
+    padding: 5px;
+  }
+
+  .panel-page-context {
+    padding-block: 5px;
+  }
+
+  .panel-page-context-icon {
+    width: 22px;
+    height: 22px;
+  }
+
+  .chat-messages {
+    padding-block: 8px;
+    row-gap: 10px;
+  }
+
+  .empty-state-mark {
+    width: 36px;
+    height: 36px;
+    margin-bottom: 8px;
+  }
+
+  .empty-state-copy {
+    max-width: 290px;
+    margin-bottom: 12px;
+  }
+
+  .starter-button {
+    padding-block: 7px;
+  }
+
+  .composer-footer {
+    padding: 7px;
+  }
+
+  .composer-shell {
+    padding: 6px 7px;
+    border-radius: 16px;
+  }
+
+  .composer-topbar {
+    padding-bottom: 5px;
+  }
+
+  .composer-submit {
+    width: 34px;
+    height: 34px;
+  }
+
+  .composer-hint {
+    padding-top: 2px;
+  }
+}
+
+@media (max-width: 350px) {
+  .starter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .composer-key-hint {
+    display: none;
+  }
+}
+
+@media (max-height: 680px) {
+  .empty-state {
+    justify-content: flex-start;
+    padding-top: 6px;
+  }
+
+  .empty-state-mark {
+    width: 34px;
+    height: 34px;
+    margin-bottom: 7px;
+  }
+
+  .empty-state-copy {
+    max-width: 280px;
+    margin-bottom: 10px;
+    line-height: 1.4;
+  }
+
+  .starter-button {
+    padding-block: 6px;
+  }
+}
+
+select,
+select option,
+select optgroup {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Scrollbar styling */

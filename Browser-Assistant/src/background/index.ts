@@ -1,4 +1,5 @@
-import { sendChatMessage, detectHandoff, looksLikeHandoff } from './api-client';
+import { detectHandoff, looksLikeHandoff } from './api-client';
+import { sendChatMessageWithFallback } from './model-router';
 import {
   getSettings,
   saveSettings,
@@ -23,9 +24,19 @@ import type {
   PageContext,
   Settings,
   ResolvedModel,
+  CustomModel,
+  AssistantMode,
 } from '../shared/types';
 import type { AgentStep } from '../shared/actions';
-import { OPENCODE_ZEN_BASE_URL, DEFAULT_OPENCODE_ZEN_KEY, DEFAULT_MODEL_ID } from '../shared/constants';
+import {
+  OPENCODE_ZEN_BASE_URL,
+  DEFAULT_OPENCODE_ZEN_KEY,
+  DEFAULT_MODEL_ID,
+  DEFAULT_ZENMUX_API_KEY,
+  ZENMUX_AUTO_MODEL_ID,
+  ZENMUX_BASE_URL,
+  ZENMUX_PRIORITY_MODELS,
+} from '../shared/constants';
 
 function generateId(): string {
   return crypto.randomUUID();
@@ -41,9 +52,13 @@ const pendingConfirmations = new Map<string, (approved: boolean) => void>();
 
 // The panel may be closed, in which case there is nobody to receive the event.
 function broadcast(message: FromBackgroundMessage): void {
-  chrome.runtime.sendMessage(message).catch(() => {
-    /* no listener */
-  });
+  try {
+    // Use the callback form so a sleeping/closed side panel cannot create an
+    // unhandled rejected Promise while a response is being streamed.
+    chrome.runtime.sendMessage(message, () => void chrome.runtime.lastError);
+  } catch {
+    // The side panel may be closed between two streamed chunks.
+  }
 }
 
 interface AgentRunRequest {
@@ -51,7 +66,8 @@ interface AgentRunRequest {
   conversation: Conversation;
   priorMessages: Message[];
   settings: Settings;
-  model: ResolvedModel;
+  models: ResolvedModel[];
+  mode?: AssistantMode;
   tabId: number;
 }
 
@@ -61,7 +77,7 @@ interface AgentRunRequest {
  * the user asked for something to be done rather than explained.
  */
 async function startAgentRun(request: AgentRunRequest): Promise<FromBackgroundMessage> {
-  const { goal, conversation, priorMessages, settings, model, tabId } = request;
+  const { goal, conversation, priorMessages, settings, models, tabId } = request;
   const runId = generateId();
   activeRun = { id: runId, cancelled: false };
 
@@ -73,7 +89,7 @@ async function startAgentRun(request: AgentRunRequest): Promise<FromBackgroundMe
       goal,
       history: priorMessages,
       settings,
-      model,
+      models,
       emitStep: (step) => broadcast({ type: 'AGENT_STEP', payload: { runId, step } }),
       emitStatus: (kind, text) => broadcast({ type: 'AGENT_STATUS', payload: { runId, kind, text } }),
       requestConfirmation: (confirmation) => askForConfirmation(runId, confirmation),
@@ -96,7 +112,7 @@ async function startAgentRun(request: AgentRunRequest): Promise<FromBackgroundMe
     role: 'assistant',
     content: result.summary,
     timestamp: Date.now(),
-    metadata: { agent: true, steps: result.steps, model: model.model },
+    metadata: { agent: true, steps: result.steps, model: models[0]?.model },
   };
   conversation.messages.push(assistantMessage);
   if (conversation.messages.filter((m) => m.role === 'user').length === 1) {
@@ -144,33 +160,99 @@ function askForConfirmation(runId: string, request: ConfirmationRequest): Promis
   });
 }
 
-// Turn the user's selection into a concrete endpoint/model/key.
-// Custom models are prefixed "custom:"; anything else is an OpenCode Zen model.
-function resolveModel(settings: Settings): ResolvedModel {
+// Turn the user's selection into an ordered list of concrete candidates.
+// The automatic default tries ZenMux by availability, then OpenCode Zen.
+// Custom and explicitly selected OpenCode models remain opt-in overrides.
+function resolveModels(settings: Settings): ResolvedModel[] {
   const selected = settings.selectedModel || DEFAULT_MODEL_ID;
 
   if (selected.startsWith('custom:')) {
     const custom = settings.customModels?.find((m) => `custom:${m.id}` === selected);
     if (custom) {
-      return {
+      return [{
         endpoint: custom.endpoint,
         model: custom.model,
         apiKey: custom.apiKey ?? '',
-      };
+        provider: 'custom',
+        label: custom.label,
+      }];
     }
   }
 
-  // Default: OpenCode Zen. Use the user's key override, else the built-in key.
-  return {
+  const openCodeFallback: ResolvedModel = {
     endpoint: OPENCODE_ZEN_BASE_URL,
-    model: selected.startsWith('custom:') ? DEFAULT_MODEL_ID : selected,
+    model: selected === ZENMUX_AUTO_MODEL_ID || selected.startsWith('custom:') ? DEFAULT_MODEL_ID : selected,
     apiKey: settings.apiKey?.trim() || DEFAULT_OPENCODE_ZEN_KEY,
+    provider: 'opencode',
+    label: 'OpenCode Zen',
   };
+
+  if (selected === ZENMUX_AUTO_MODEL_ID) {
+    const zenMuxCandidates = DEFAULT_ZENMUX_API_KEY
+      ? ZENMUX_PRIORITY_MODELS.map((model) => ({
+          endpoint: ZENMUX_BASE_URL,
+          model: model.id,
+          apiKey: DEFAULT_ZENMUX_API_KEY,
+          provider: 'zenmux' as const,
+          label: `ZenMux · ${model.label}`,
+        }))
+      : [];
+    return [...zenMuxCandidates, openCodeFallback];
+  }
+
+  return [openCodeFallback];
+}
+
+function resolveTestEndpoint(endpoint: string): string {
+  const trimmed = endpoint.trim();
+  if (/\/chat\/completions\/?$/i.test(trimmed)) return trimmed;
+  return new URL('chat/completions', trimmed.endsWith('/') ? trimmed : `${trimmed}/`).toString();
+}
+
+async function testCustomModelConnection(model: CustomModel): Promise<{ ok: boolean; message: string }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (model.apiKey?.trim()) headers.Authorization = `Bearer ${model.apiKey.trim()}`;
+    const response = await fetch(resolveTestEndpoint(model.endpoint), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: model.model,
+        messages: [{ role: 'user', content: 'Reply with OK.' }],
+        stream: false,
+        max_tokens: 4,
+      }),
+      signal: controller.signal,
+    });
+    if (response.ok) return { ok: true, message: 'Connection successful.' };
+    const body = await response.text();
+    let detail = body;
+    try {
+      const parsed = JSON.parse(body);
+      detail = parsed?.error?.message ?? parsed?.message ?? body;
+    } catch {
+      // Keep the provider's plain-text error.
+    }
+    return { ok: false, message: `${response.status}: ${String(detail).slice(0, 180)}` };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof DOMException && error.name === 'AbortError' ? 'Connection timed out.' : 'Could not reach this endpoint.',
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function generateTitle(content: string): string {
   const trimmed = content.trim().slice(0, 60);
   return trimmed.length < content.trim().length ? trimmed + '...' : trimmed;
+}
+
+function isDirectDeveloperTask(content: string): boolean {
+  return /\b(inspect|audit|debug|smoke\s*test|reproduce|regression\s*test|qa\s+(?:this|the)\s+(?:page|ui|screen)|validate\s+(?:this|the)\s+(?:page|ui|screen)|check\s+(?:the\s+)?(?:ui|page|screen)|try\s+(?:the\s+)?buttons?|interact\s+with\s+(?:the\s+)?page|live\s+(?:ui\s+)?test)\b/i.test(content);
 }
 
 // ── Side Panel Message Handler ──────────────────────────────────
@@ -181,7 +263,7 @@ async function handleSidePanelMessage(
 ): Promise<FromBackgroundMessage> {
   switch (message.type) {
     case 'SEND_MESSAGE': {
-      const { content, conversationId, includePageContext } = message.payload;
+      const { content, conversationId, includePageContext, mode = 'general' } = message.payload;
       const settings = await getSettings();
 
       // Get or create conversation
@@ -268,16 +350,24 @@ async function handleSidePanelMessage(
       conversation.messages.push(assistantMessage);
 
       // Resolve which provider/model/key to use.
-      const modelConfig = resolveModel(settings);
+      const modelConfigs = resolveModels(settings);
 
-      // A key is only required for OpenCode Zen (the default provider);
-      // custom endpoints may legitimately need none.
-      const isDefaultProvider = modelConfig.endpoint === OPENCODE_ZEN_BASE_URL;
-      if (isDefaultProvider && !modelConfig.apiKey) {
+      // Custom endpoints may legitimately need no key. Automatic routing can
+      // still use OpenCode Zen if the ZenMux build-time key is absent.
+      if (modelConfigs.length === 0 || modelConfigs.every((candidate) => !candidate.apiKey && candidate.provider !== 'custom')) {
         assistantMessage.content =
-          'No API key available. Add your OpenCode Zen key in Settings, or select a custom model.';
+          'No API key available. Configure a ZenMux or OpenCode Zen key, or select a custom model in Settings.';
         conversation.updatedAt = Date.now();
         await saveConversation(conversation);
+        broadcast({
+          type: 'AI_RESPONSE_CHUNK',
+          payload: {
+            conversationId: conversation.id,
+            messageId: assistantMessageId,
+            content: assistantMessage.content,
+            done: true,
+          },
+        });
         return {
           type: 'AI_RESPONSE_CHUNK',
           payload: {
@@ -295,19 +385,113 @@ async function handleSidePanelMessage(
       const activeTab = await getActiveTab();
       const canAct =
         settings.agentEnabled && !activeRun && !!activeTab?.id && /^https?:/i.test(activeTab.url ?? '');
+      const directDeveloperTask = mode === 'developer' && isDirectDeveloperTask(content);
+
+      // Do not silently downgrade an explicit live QA request into the static
+      // chat path. Explain the missing prerequisite so the user can fix it.
+      if (directDeveloperTask && !canAct) {
+        assistantMessage.content = !settings.agentEnabled
+          ? 'Live Developer QA is switched off. Turn on "Let the assistant act on pages" in Settings and ask me again.'
+          : activeRun
+            ? 'A Developer QA run is already in progress. Let it finish, or press Stop, then ask me again.'
+            : !activeTab?.id || !/^https?:/i.test(activeTab.url ?? '')
+              ? 'Live Developer QA needs a normal website tab. Open an http(s) page and ask me again.'
+              : 'I could not start the live Developer QA run. Please ask me again.';
+        assistantMessage.timestamp = Date.now();
+        conversation.updatedAt = Date.now();
+        await saveConversation(conversation);
+        broadcast({
+          type: 'AI_RESPONSE_CHUNK',
+          payload: {
+            conversationId: conversation.id,
+            messageId: assistantMessageId,
+            content: assistantMessage.content,
+            done: true,
+          },
+        });
+        return {
+          type: 'AI_RESPONSE_CHUNK',
+          payload: {
+            conversationId: conversation.id,
+            messageId: assistantMessageId,
+            content: assistantMessage.content,
+            done: true,
+          },
+        };
+      }
+
+      // Developer QA requests are operational by definition. Do not ask the
+      // chat model to decide whether "inspect/debug/test" means live work —
+      // that is what previously produced a static read-only answer. Start the
+      // browser agent directly, while keeping the existing safety policy for
+      // consequential actions inside the run.
+      if (directDeveloperTask && canAct && activeTab?.id) {
+        conversation.messages.pop(); // remove the empty assistant placeholder
+        conversation.updatedAt = Date.now();
+        await saveConversation(conversation);
+
+        const agentRequest: AgentRunRequest = {
+          goal: content,
+          conversation,
+          priorMessages: conversation.messages.slice(),
+          settings,
+          models: modelConfigs,
+          mode,
+          tabId: activeTab.id,
+        };
+        setTimeout(() => {
+          void startAgentRun(agentRequest).catch((err) => {
+            broadcast({
+              type: 'AGENT_FINISHED',
+              payload: {
+                runId: generateId(),
+                conversationId: conversation.id,
+                messageId: generateId(),
+                content: 'The developer run stopped unexpectedly: ' + (err instanceof Error ? err.message : String(err)),
+                steps: [],
+                incomplete: true,
+              },
+            });
+          });
+        }, 0);
+        return { type: 'REQUEST_ACCEPTED', payload: { conversationId: conversation.id } };
+      }
 
       // Stream response
       let fullContent = '';
       let chatFailed = false;
+      let lastStreamBroadcastAt = 0;
+      const broadcastStreamChunk = (chunked: string, done = false) => {
+        broadcast({
+          type: 'AI_RESPONSE_CHUNK',
+          payload: {
+            conversationId: conversation.id,
+            messageId: assistantMessageId,
+            content: chunked,
+            done,
+          },
+        });
+      };
       try {
-        await sendChatMessage(
-          modelConfig,
+        await sendChatMessageWithFallback(
+          modelConfigs,
           content,
           pageContext,
           conversation.messages.slice(0, -1), // Exclude the empty assistant message
           {
             onChunk: (chunked) => {
               fullContent = chunked;
+              // Action requests can still produce a normal answer. Only hold
+              // back a response that looks like the short JSON handoff marker
+              // so the internal protocol never flashes in the chat bubble.
+              const possibleHandoff = canAct && chunked.trimStart().startsWith('{') && chunked.length < 700;
+              if (!possibleHandoff) {
+                const now = performance.now();
+                if (now - lastStreamBroadcastAt >= 50 || chunked.length <= 1) {
+                  lastStreamBroadcastAt = now;
+                  broadcastStreamChunk(chunked);
+                }
+              }
             },
             onDone: (completed) => {
               fullContent = completed;
@@ -317,7 +501,8 @@ async function handleSidePanelMessage(
               chatFailed = true;
             },
           },
-          canAct
+          canAct,
+          mode
         );
       } catch (err) {
         fullContent = `Error: ${err instanceof Error ? err.message : 'Unknown error'}`;
@@ -325,22 +510,44 @@ async function handleSidePanelMessage(
       }
 
       // Did the model decide this was a job rather than a question?
+      let handoff: { goal: string } | null = null;
       if (!chatFailed) {
-        const handoff = canAct && activeTab?.id ? detectHandoff(fullContent) : null;
+        handoff = canAct && activeTab?.id ? detectHandoff(fullContent) : null;
         if (handoff && activeTab?.id) {
           // Drop the placeholder — the sentinel is plumbing, not an answer.
           conversation.messages.pop();
           conversation.updatedAt = Date.now();
           await saveConversation(conversation);
 
-          return startAgentRun({
+          const agentRequest: AgentRunRequest = {
             goal: handoff.goal || content,
             conversation,
             priorMessages: conversation.messages.slice(0, -1),
             settings,
-            model: modelConfig,
+            models: modelConfigs,
+            mode,
             tabId: activeTab.id,
-          });
+          };
+          // Agent runs can take minutes. Return an acknowledgement now and
+          // deliver the eventual result through the existing broadcast events;
+          // keeping a one-shot sendMessage channel open for the whole run is
+          // what produces Chrome's "message channel closed" error.
+          setTimeout(() => {
+            void startAgentRun(agentRequest).catch((err) => {
+              broadcast({
+                type: 'AGENT_FINISHED',
+                payload: {
+                  runId: generateId(),
+                  conversationId: conversation.id,
+                  messageId: generateId(),
+                  content: 'The agent stopped unexpectedly: ' + (err instanceof Error ? err.message : String(err)),
+                  steps: [],
+                  incomplete: true,
+                },
+              });
+            });
+          }, 0);
+          return { type: 'REQUEST_ACCEPTED', payload: { conversationId: conversation.id } };
         }
 
         // The model asked to act but we could not start a run, or the sentinel
@@ -367,6 +574,10 @@ async function handleSidePanelMessage(
       }
 
       await saveConversation(conversation);
+
+      // The final event also reconciles any throttled chunk and lets the
+      // sidepanel stop its loading state immediately.
+      if (!handoff) broadcastStreamChunk(fullContent, true);
 
       return {
         type: 'AI_RESPONSE_CHUNK',
@@ -405,9 +616,9 @@ async function handleSidePanelMessage(
         };
       }
 
-      const modelConfig = resolveModel(settings);
-      if (modelConfig.endpoint === OPENCODE_ZEN_BASE_URL && !modelConfig.apiKey) {
-        return { type: 'ERROR', payload: { code: 'NO_KEY', message: 'No API key available. Add your OpenCode Zen key in Settings.', retryable: false } };
+      const modelConfigs = resolveModels(settings);
+      if (modelConfigs.length === 0 || modelConfigs.every((candidate) => !candidate.apiKey && candidate.provider !== 'custom')) {
+        return { type: 'ERROR', payload: { code: 'NO_KEY', message: 'No API key available. Configure a ZenMux or OpenCode Zen key in Settings.', retryable: false } };
       }
 
       // Get or create the conversation and record the user's goal.
@@ -441,7 +652,7 @@ async function handleSidePanelMessage(
       conversation.updatedAt = Date.now();
       await saveConversation(conversation);
 
-      return startAgentRun({ goal, conversation, priorMessages, settings, model: modelConfig, tabId: tab.id });
+      return startAgentRun({ goal, conversation, priorMessages, settings, models: modelConfigs, tabId: tab.id });
     }
 
     case 'AGENT_CONFIRM_DECISION': {
@@ -466,6 +677,7 @@ async function handleSidePanelMessage(
       const context: PageContext = {
         url: extracted.url,
         title: extracted.title,
+        faviconUrl: (await getActiveTab())?.favIconUrl,
         content: extracted.content,
         selectedText: extracted.selectedText || undefined,
         language: extracted.language,
@@ -494,6 +706,15 @@ async function handleSidePanelMessage(
 
     case 'DELETE_CONVERSATION': {
       await deleteConversation(message.payload.id);
+      return { type: 'PANEL_TOGGLED' }; // Reuse as acknowledgment
+    }
+
+    case 'TEST_MODEL_CONNECTION': {
+      return { type: 'MODEL_CONNECTION_RESULT', payload: await testCustomModelConnection(message.payload.model) };
+    }
+
+    case 'RESTORE_CONVERSATION': {
+      await saveConversation(message.payload.conversation);
       return { type: 'PANEL_TOGGLED' }; // Reuse as acknowledgment
     }
 

@@ -9,7 +9,7 @@ An AI-powered Chrome side panel that **reads the page or PDF you're currently vi
 - **PDF support** — reads PDFs opened in the browser by fetching and parsing them with pdf.js
 - **Summarize / analyze / Q&A** on articles, docs, and PDFs
 - **Translate** pages and selected text into 12+ languages
-- **Multiple models** — a curated set of OpenCode Zen models, plus **your own custom OpenAI-compatible providers**
+- **Automatic model routing** — ZenMux models are tried by availability priority, with OpenCode Zen as the final fallback
 - **Works out of the box** — ships with a free default model that needs no billing setup
 - **Light / Dark / System theme**
 - **Fully responsive** minimalist UI that adapts to any panel width
@@ -18,8 +18,9 @@ An AI-powered Chrome side panel that **reads the page or PDF you're currently vi
 ## Installation (from source)
 
 1. Clone this repository
-2. Create a `.env` file with a default OpenCode Zen key (optional — users can also set their own in Settings):
+2. Create a `.env` file with the default provider keys:
    ```
+   VITE_ZENMUX_API_KEY=sk-your-zenmux-key-here
    VITE_OPENCODE_ZEN_KEY=sk-your-key-here
    ```
 3. Run `npm install`
@@ -32,11 +33,11 @@ An AI-powered Chrome side panel that **reads the page or PDF you're currently vi
 
 ## Setup
 
-The extension works immediately with the built-in **free** default model (`big-pickle`). To customize:
+The extension uses **ZenMux automatic routing by default**. Users do not need to choose a model or configure a provider. If all configured ZenMux candidates fail, OpenCode Zen is used automatically. To customize:
 
 1. Click the extension icon to open the side panel
 2. Open **Settings** (gear icon)
-3. Pick a model, and/or paste your own OpenCode Zen API key
+3. Optionally pick an OpenCode Zen/custom model, and/or paste your own OpenCode Zen API key
 4. Start chatting
 
 ### Using paid models
@@ -106,7 +107,7 @@ Click the sparkle icon in the input bar for:
 
 ### Settings
 
-- **Model** — free / metered OpenCode Zen models and your custom providers
+- **Model** — ZenMux automatic routing by default, plus optional OpenCode Zen models and custom providers
 - **OpenCode Zen API key** — overrides the built-in default key (optional)
 - **Custom models** — add/remove OpenAI-compatible providers
 - **Acting on pages** — master switch; off makes the assistant read-only
@@ -171,18 +172,46 @@ Your data stays on your device. Page content is sent to the AI provider only whe
 - **Manifest Version**: 3
 - **Frontend**: React 18 + TypeScript + Tailwind CSS
 - **Build**: Vite + CRXJS
-- **Default API**: OpenCode Zen (`https://opencode.ai/zen/v1`, OpenAI-compatible) — default model `big-pickle` (free)
+- **Default API**: ZenMux (`https://zenmux.ai/api/v1`, OpenAI-compatible) — automatic availability-priority routing
+- **Fallback API**: OpenCode Zen (`https://opencode.ai/zen/v1`, OpenAI-compatible)
 - **Custom providers**: any OpenAI-compatible `/chat/completions` endpoint
 - **PDF parsing**: pdfjs-dist
 - **Storage**: `chrome.storage.local`
 
 ## Development
 
+Use the CRXJS dev server for day-to-day work. It keeps the extension's dev
+loader connected to a stable `localhost:5173` origin and enables HMR/live
+reload for the side panel and content scripts.
+
 ```bash
-npm install      # install dependencies
-npm run dev      # development build with HMR
-npm run build    # production build → dist/
-npm test         # run unit tests
+npm install
+npm run dev
+```
+
+Then, in `chrome://extensions/`, enable Developer mode and click **Load
+unpacked** once, selecting this project's `dist` folder. Keep `npm run dev`
+running while you work; do not load the `dist` folder again for every change.
+CRXJS updates the side panel and content scripts automatically. Changes to the
+background service worker may trigger one normal extension reload, but they do
+not require loading the folder again.
+
+If Chrome shows `Service worker registration failed` or `Failed to load the
+script`, the dev server is not reachable. Start `npm run dev` again before
+reloading the extension. The development `service-worker-loader.js` imports
+from `http://localhost:5173`, so a stopped dev server cannot run that loader.
+
+For a standalone unpacked build that does not depend on a running dev server:
+
+```bash
+npm run build
+```
+
+After that build, use Chrome's extension **Reload** button when needed. Do not
+use a `dist` folder produced by `npm run dev` as a standalone build.
+
+```bash
+npm test
 npm run typecheck
 ```
 

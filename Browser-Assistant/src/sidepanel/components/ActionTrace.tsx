@@ -39,7 +39,9 @@ export function ActionTrace({ steps, live = false }: Props) {
     <div className="rounded-xl border border-[var(--border-color)] bg-[var(--bg-secondary)] overflow-hidden">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left"
+        className="w-full flex items-center gap-2 px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+        aria-expanded={open}
+        aria-label={open ? 'Collapse action trace' : 'Expand action trace'}
       >
         <HandIcon className="w-4 h-4 flex-shrink-0 text-[var(--accent)]" />
         <span className="text-xs font-medium text-[var(--text-secondary)] min-w-0 flex-1 truncate">

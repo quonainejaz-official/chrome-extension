@@ -1,4 +1,4 @@
-import type { PageContext, Message, ResolvedModel } from '../shared/types';
+import type { AssistantMode, PageContext, Message, ResolvedModel } from '../shared/types';
 import {
   API_TIMEOUT,
   STREAM_IDLE_TIMEOUT,
@@ -25,7 +25,7 @@ function resolveChatEndpoint(endpoint: string): string {
  */
 export const HANDOFF_MARKER = 'handoff';
 
-function buildSystemPrompt(pageContext?: PageContext, canAct = false): string {
+function buildSystemPrompt(pageContext?: PageContext, canAct = false, mode: AssistantMode = 'general'): string {
   let prompt = `You are "AI Page Assistant", an AI embedded in a Chrome side panel. The user is viewing a web page or PDF in their browser, and the extension automatically extracts that page's text and gives it to you below. You act on the page the user is currently looking at.
 
 Guidelines:
@@ -49,6 +49,19 @@ Judge from the user's message which they want:
 Judge intent, not keywords: the user may write in any language, including Roman Urdu or Hindi ("form bhar do", "ye button daba do", "sirf batao ke ismein kya likha hai"). If they only want to be told something, answer — do not hand off. If it is genuinely ambiguous, answer normally and offer to do it.
 
 CRITICAL: when they want something done, hand off IMMEDIATELY. Never reply asking what to fill in, what data to use, or for confirmation first. You do not need any of that — the action system reads the form itself, uses the user's saved details, and invents sensible placeholder values when there are none. Asking first just costs the user another round of typing. Hand off and let it work.`;
+  }
+
+  if (mode === 'developer') {
+    prompt += `
+
+# Developer / QA mode
+Act as a careful developer and QA copilot. Help debug the current web experience, inspect visible UI behavior, design API checks, generate implementation-ready test cases, and produce test or fix code when the user provides enough source/spec context.
+- Separate observed evidence, likely causes, assumptions, and blocked checks.
+- For UI work, cover functional behavior, validation, accessibility, responsive states, loading/error/empty states, and safe non-destructive interactions. You may operate the current page when the user asks you to test it and page actions are enabled.
+- For API work, distinguish a real request you can execute from a test plan or example. Never invent status codes, payloads, headers, logs, console output, or network results.
+- For QA, use reproducible cases with IDs, preconditions, steps, expected results, priority, and pass/fail/blocked status where evidence exists.
+- For implementation requests, return complete drop-in code or a precise patch and identify the target file. Do not claim local repository files were edited or tests were run unless the required source/tool access actually exists.
+- Prefer read-only and reversible checks. Ask for confirmation before consequential browser actions.`;
   }
 
   if (pageContext) {
@@ -76,14 +89,15 @@ function buildMessages(
   userMessage: string,
   pageContext?: PageContext,
   history?: Message[],
-  canAct = false
+  canAct = false,
+  mode: AssistantMode = 'general'
 ): { role: string; content: string }[] {
   const messages: { role: string; content: string }[] = [];
 
   // System prompt with page context
   messages.push({
     role: 'system',
-    content: buildSystemPrompt(pageContext, canAct),
+    content: buildSystemPrompt(pageContext, canAct, mode),
   });
 
   // Conversation history (last 10 messages)
@@ -139,9 +153,10 @@ export async function sendChatMessage(
   pageContext?: PageContext,
   history?: Message[],
   callbacks?: StreamCallbacks,
-  canAct = false
+  canAct = false,
+  mode: AssistantMode = 'general'
 ): Promise<string> {
-  return streamChat(config, buildMessages(userMessage, pageContext, history, canAct), callbacks);
+  return streamChat(config, buildMessages(userMessage, pageContext, history, canAct, mode), callbacks);
 }
 
 /**
@@ -226,16 +241,23 @@ export interface ChatTurn {
 export async function chatOnce(
   config: ResolvedModel,
   messages: ChatTurn[],
-  temperature = 0.1
+  temperature = 0.1,
+  signal?: AbortSignal
 ): Promise<string> {
-  return streamChat(config, messages, undefined, temperature);
+  return streamChat(config, messages, undefined, temperature, signal);
+}
+
+/** Thrown when the caller cancelled — distinct from a timeout or a failure. */
+export function isAbortedByCaller(error: unknown): boolean {
+  return !!error && typeof error === 'object' && (error as any).abortedByCaller === true;
 }
 
 async function streamChat(
   config: ResolvedModel,
   messages: { role: string; content: string }[],
   callbacks?: StreamCallbacks,
-  temperature = 0.7
+  temperature = 0.7,
+  externalSignal?: AbortSignal
 ): Promise<string> {
   const chatEndpoint = resolveChatEndpoint(config.endpoint);
 
